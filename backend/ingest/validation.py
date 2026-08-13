@@ -54,7 +54,20 @@ def _h1(periods: list[FiscalPeriod]) -> CheckResult:
 
 
 def _h2(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
-    per, failed, ran = {}, False, False
+    """Cash flow ties to the change in cash.
+
+    Owner decision (item 2): a DEFINITIONAL mismatch — the CF statement
+    reconciles a broader cash total (restricted cash, disposal groups) than the
+    balance-sheet cash line — is not the same thing as a clean tie, and not the
+    same thing as a break. Three distinguishable outcomes:
+      pass  — flows tie to the balance-sheet cash delta directly
+      warn  — flows tie only under an alternate cash definition, or the filer's
+              own reported net-change ties while our BS cash delta does not
+              (definition mismatch; detail says which; verified AMZN/TSLA/F/WMT)
+      fail  — flows tie to nothing: a real break
+    """
+    per, ran = {}, False
+    hard_fail = False
     mismatch_notes = []
     for i, p in enumerate(periods):
         flows = (p.value("cash_from_operations") + p.value("cash_from_investing")
@@ -62,12 +75,14 @@ def _h2(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
         tol = _tol(p.value("total_assets"))
 
         ncc = p.cashflow.get("net_change_in_cash")
+        ncc_tied = None
         if ncc is not None and ncc.source == "tag":
             ran = True
             resid = abs(flows - ncc.value)
             per[p.fiscal_year] = max(per.get(p.fiscal_year, 0.0), resid)
-            if resid > tol:
-                failed = True
+            ncc_tied = resid <= tol
+            if not ncc_tied:
+                hard_fail = True        # the filer's own CF is internally inconsistent
 
         if i > 0:
             prior_cash = periods[i - 1].value("cash_and_equivalents")
@@ -78,18 +93,26 @@ def _h2(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
             continue
         ran = True
         resid = abs((p.value("cash_and_equivalents") - prior_cash) - flows)
-        if resid > tol:
-            alt_now = m.alt_cash.get(p.fiscal_year)
-            if alt_now is not None and prior_alt is not None:
-                alt_resid = abs((alt_now - prior_alt) - flows)
-                if alt_resid <= tol:
-                    mismatch_notes.append(
-                        f"FY{p.fiscal_year}: ties only under the including-restricted-cash "
-                        "definition (ASU 2016-18 definition mismatch, not a real break)")
-                    per[p.fiscal_year] = max(per.get(p.fiscal_year, 0.0), alt_resid)
-                    continue
-            failed = True
         per[p.fiscal_year] = max(per.get(p.fiscal_year, 0.0), resid)
+        if resid <= tol:
+            continue
+
+        alt_now = m.alt_cash.get(p.fiscal_year)
+        if alt_now is not None and prior_alt is not None:
+            alt_resid = abs((alt_now - prior_alt) - flows)
+            if alt_resid <= tol:
+                mismatch_notes.append(
+                    f"FY{p.fiscal_year}: ties under the broader cash definition "
+                    "(restricted cash / disposal groups — ASU 2016-18 style "
+                    "definition mismatch, not a break)")
+                continue
+        if ncc_tied:
+            mismatch_notes.append(
+                f"FY{p.fiscal_year}: the filer's reported net change ties to its "
+                "flows, but the balance-sheet cash line uses a narrower "
+                "definition than the CF total (definition mismatch, not a break)")
+            continue
+        hard_fail = True
 
     if not ran:
         return CheckResult("H2", "fail", "skipped",
@@ -97,8 +120,9 @@ def _h2(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
                                   "balance to difference against.")
     detail = "CFO + CFI + CFF + FX = change in cash"
     if mismatch_notes:
-        detail += "; " + "; ".join(mismatch_notes)
-    return CheckResult("H2", "fail", "fail" if failed else "pass",
+        detail += "; DEFINITIONAL: " + "; ".join(mismatch_notes)
+    status = "fail" if hard_fail else ("warn" if mismatch_notes else "pass")
+    return CheckResult("H2", "fail", status,
                        magnitude=_worst(per),
                        tolerance=_tol(periods[-1].value("total_assets")),
                        detail=detail, per_period=per)
@@ -190,7 +214,9 @@ def _h6(periods: list[FiscalPeriod]) -> CheckResult:
     count = 0
     for p in periods:
         for f in list(p.income.values()) + list(p.balance.values()) + list(p.cashflow.values()):
-            if f.was_restated:
+            # Share/EPS-unit recasts are split adjustments (owner decision,
+            # item 7) — labeled split_adjustment in warnings, not restatements.
+            if f.was_restated and f.unit not in ("shares", "USD/shares"):
                 count += 1
                 per[p.fiscal_year] = max(per.get(p.fiscal_year, 0.0),
                                          f.restatement_delta_pct or 0.0)
@@ -217,4 +243,181 @@ def validate_history(m: MappedHistory) -> ValidationReport:
     return ValidationReport(results=[
         _h1(periods), _h2(periods, m), _h3(periods, m),
         _h4(periods), _h5(periods), _h6(periods), _h7(periods),
+        *plausibility_checks(periods, m),
     ])
+
+
+# ── Plausibility checks PL1–PL8 (spec 07) ────────────────────────────────────
+#
+# A different failure class from H1–H7: arithmetic tie-outs cannot see
+# MISCLASSIFICATION, because residual buckets keep the statements balanced no
+# matter where a value lands (the KHC long-term-debt gap balanced perfectly).
+# These checks look for asymmetric presence — an item that implies another
+# item exists, where the other resolved to zero. Always warnings, never
+# errors: they flag combinations for human review. Rules are one-directional
+# on purpose; the reverse implication usually has legitimate cases.
+
+# "Zero" for a balance that resolved via zero_logged or a genuine nil.
+_ZERO = 1.0
+
+
+def _gross_debt(p: FiscalPeriod) -> float:
+    return p.value("short_term_debt", 0.0) + p.value("long_term_debt", 0.0)
+
+
+def _pl(check_id: str, label: str, flagged: dict[int, float], detail_ok: str,
+        detail_bad: str) -> CheckResult:
+    if not flagged:
+        return CheckResult(check_id, "warn", "pass", detail=detail_ok)
+    fys = ", ".join(f"FY{y}" for y in sorted(flagged))
+    return CheckResult(check_id, "warn", "warn", magnitude=_worst(flagged),
+                       detail=f"{label} in {fys}: {detail_bad}",
+                       per_period=flagged)
+
+
+def _pl1(periods: list[FiscalPeriod]) -> CheckResult:
+    # Paying material interest implies borrowings. One-directional: debt with
+    # no interest expense is NOT flagged (zero-coupon debt, capitalized
+    # interest, fresh issuance). Known review-level false positives: interest
+    # on uncertain tax positions or supplier financing tagged as
+    # InterestExpense — usually immaterial, hence the tolerance floor.
+    flagged = {p.fiscal_year: p.value("interest_expense", 0.0) for p in periods
+               if p.value("interest_expense", 0.0) > _tol(p.value("total_assets"))
+               and _gross_debt(p) <= _ZERO}
+    return _pl("PL1", "interest_expense without any debt", flagged,
+               "Interest expense is matched by debt on the balance sheet.",
+               "material interest expense while short_term_debt + long_term_debt "
+               "= 0 — paying interest implies borrowings; check the debt chains")
+
+
+def _pl2(periods: list[FiscalPeriod]) -> CheckResult:
+    # D&A or capex implies a depreciable/amortizable asset base. Goodwill is
+    # excluded (not amortized). All three bases must be zero to warn, so an
+    # asset-light software filer amortizing only intangibles stays quiet.
+    flagged = {}
+    for p in periods:
+        activity = max(p.value("d_and_a", 0.0), p.value("capex", 0.0))
+        base = (p.value("ppe_net", 0.0) + p.value("intangibles", 0.0)
+                + p.value("operating_lease_rou", 0.0))
+        if activity > _tol(p.value("total_assets")) and base <= _ZERO:
+            flagged[p.fiscal_year] = activity
+    return _pl("PL2", "D&A/capex without an asset base", flagged,
+               "D&A and capex are matched by PP&E/intangible/ROU balances.",
+               "depreciation or capex reported while PP&E, intangibles, and ROU "
+               "assets are all 0 — check the asset chains")
+
+
+def _pl3(periods: list[FiscalPeriod], cost_structure: str) -> CheckResult:
+    # Selling something costs something — for filers that PRESENT costs by
+    # function. by_nature filers (VZ, DAL, MCD — verified) have no COGS concept
+    # at all, so this rule is gated on the explicit cost_structure field
+    # (owner decision, item 4) rather than firing on every one of them.
+    if cost_structure == "by_nature":
+        return CheckResult("PL3", "warn", "skipped",
+                           detail="Costs presented by nature — no COGS concept "
+                                  "(cost_structure: by_nature).")
+    flagged = {p.fiscal_year: p.value("revenue", 0.0) for p in periods
+               if p.value("revenue", 0.0) > _tol(p.value("total_assets"))
+               and p.value("cost_of_revenue", 0.0) <= 0.0}
+    return _pl("PL3", "revenue without cost of revenue", flagged,
+               "Revenue is matched by a cost of revenue.",
+               "material revenue with cost_of_revenue <= 0 — check the COGS chain")
+
+
+def _pl4(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
+    # Repaying or issuing debt in financing activities implies debt on some
+    # balance sheet. Known false positive: commercial paper issued and fully
+    # repaid intra-year never shows at an FYE — one reason this is warn-only.
+    if any(_gross_debt(p) > _ZERO for p in periods):
+        return CheckResult("PL4", "warn", "pass",
+                           detail="Debt flows are matched by balance-sheet debt.")
+    flagged = {p.fiscal_year: max(p.value("debt_issued", 0.0),
+                                  p.value("debt_repaid", 0.0))
+               for p in periods
+               if max(p.value("debt_issued", 0.0),
+                      p.value("debt_repaid", 0.0)) > _tol(p.value("total_assets"))}
+    return _pl("PL4", "debt flows without balance-sheet debt", flagged,
+               "No debt flows, no debt — consistent.",
+               "debt issued/repaid in financing while no debt ever appears on "
+               "the balance sheet — check the debt chains (or intra-year CP churn)")
+
+
+def _pl5(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
+    # Lease cost implies a lease liability — but only post-ASC 842 (effective
+    # for fiscal years beginning after 2018-12-15); before that, operating
+    # leases were legitimately off balance sheet. Guarded to periods ending
+    # 2020 onward.
+    lease_cost = (m.probes or {}).get("lease_cost", {})
+    flagged = {}
+    for p in periods:
+        if p.end.year < 2020:
+            continue
+        cost = lease_cost.get(p.fiscal_year, 0.0)
+        if (cost > _tol(p.value("total_assets"))
+                and p.value("operating_lease_liability", 0.0) <= _ZERO
+                and p.value("operating_lease_rou", 0.0) <= _ZERO):
+            flagged[p.fiscal_year] = cost
+    return _pl("PL5", "lease cost without lease balances", flagged,
+               "Lease cost is matched by lease balances (or predates ASC 842).",
+               "operating lease cost reported while lease liability and ROU "
+               "asset are both 0 — check the lease chains")
+
+
+def _pl6(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
+    # Tax expense implies tax-related balances somewhere: a deferred position
+    # or a payable. Highest false-positive risk of the set — many filers fold
+    # taxes payable into accrued liabilities — which is exactly why this is a
+    # review-level warning, not an error.
+    probes = m.probes or {}
+    dta = probes.get("deferred_tax_assets", {})
+    payable = probes.get("taxes_payable", {})
+    flagged = {}
+    for p in periods:
+        balances = (p.value("deferred_tax_liabilities", 0.0)
+                    + dta.get(p.fiscal_year, 0.0) + payable.get(p.fiscal_year, 0.0))
+        if (p.value("income_tax", 0.0) > _tol(p.value("total_assets"))
+                and balances <= _ZERO):
+            flagged[p.fiscal_year] = p.value("income_tax", 0.0)
+    return _pl("PL6", "tax expense without tax balances", flagged,
+               "Tax expense is matched by deferred/payable tax balances.",
+               "material tax expense with no deferred tax or taxes-payable "
+               "balances — check the tax chains (payables may hide in accrued)")
+
+
+def _pl7(periods: list[FiscalPeriod]) -> CheckResult:
+    # ASC 842 books the ROU asset and lease liability together; one without
+    # the other is almost always a mapping gap, not economics. (Impairment can
+    # shrink the ROU asset, so only a hard zero on one side flags.)
+    flagged = {}
+    for p in periods:
+        rou = p.value("operating_lease_rou", 0.0)
+        liab = p.value("operating_lease_liability", 0.0)
+        tol = _tol(p.value("total_assets"))
+        if (rou > tol and liab <= _ZERO) or (liab > tol and rou <= _ZERO):
+            flagged[p.fiscal_year] = max(rou, liab)
+    return _pl("PL7", "one-sided ROU/lease-liability", flagged,
+               "ROU assets and lease liabilities appear together.",
+               "an ROU asset or operating lease liability appears without its "
+               "counterpart — ASC 842 books them together; check the lease chains")
+
+
+def _pl8(periods: list[FiscalPeriod]) -> CheckResult:
+    # Accrual revenue almost always leaves receivables at year end. Flag only
+    # when AR is zero in EVERY period — a persistent zero for a revenue-
+    # generating filer suggests an AR tag outside the chain, not an all-cash
+    # business. Single-year zeros stay quiet (securitizations, year-end sales).
+    tol_latest = _tol(periods[-1].value("total_assets"))
+    if all(p.value("revenue", 0.0) > tol_latest for p in periods) and all(
+            p.value("accounts_receivable", 0.0) <= _ZERO for p in periods):
+        flagged = {p.fiscal_year: p.value("revenue", 0.0) for p in periods}
+        return _pl("PL8", "revenue without receivables", flagged,
+                   "", "revenue in every year with accounts receivable = 0 in "
+                       "every year — likely an unchained AR tag")
+    return CheckResult("PL8", "warn", "pass",
+                       detail="Receivables present for a revenue-generating filer.")
+
+
+def plausibility_checks(periods: list[FiscalPeriod], m: MappedHistory) -> list[CheckResult]:
+    return [_pl1(periods), _pl2(periods), _pl3(periods, m.cost_structure),
+            _pl4(periods, m), _pl5(periods, m), _pl6(periods, m), _pl7(periods),
+            _pl8(periods)]

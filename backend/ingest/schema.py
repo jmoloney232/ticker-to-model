@@ -30,6 +30,7 @@ class SchemaItem:
     unit: str = "USD"
     missing_rule: str | None = None
     derive: str | None = None     # documentation of the derive rule
+    on_derive_fail: str = "zero_logged"   # zero_logged | omit (when a deriver returns None)
     selection: str = "annual"     # annual | latest (cover-page shares)
     cross_check: str | None = None
     notes: str | None = None
@@ -62,6 +63,8 @@ def _validate(items: list[SchemaItem]) -> None:
             raise ValueError(f"schema.yaml: {i.name} required but tagless")
         if not i.required and i.missing_rule not in MISSING_RULES:
             raise ValueError(f"schema.yaml: {i.name} optional without a valid missing_rule")
+        if i.on_derive_fail not in ("zero_logged", "omit"):
+            raise ValueError(f"schema.yaml: {i.name} has invalid on_derive_fail")
         expected = "instant" if i.statement == "balance" else "duration"
         if i.shape != expected:
             raise ValueError(f"schema.yaml: {i.name} shape {i.shape!r}, expected {expected!r}")
@@ -81,6 +84,7 @@ def load_schema() -> Schema:
             unit=r.get("unit", "USD"),
             missing_rule=r.get("missing_rule"),
             derive=r.get("derive"),
+            on_derive_fail=r.get("on_derive_fail", "zero_logged"),
             selection=r.get("selection", "annual"),
             cross_check=r.get("cross_check"),
             notes=r.get("notes"),

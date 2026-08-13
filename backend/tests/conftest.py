@@ -70,7 +70,7 @@ def model_year(year: int) -> dict[str, float]:
 
     cash = 500 * M
     re = 200 * M
-    contributed = 577 * M
+    contributed = 617 * M      # seeded so assets (incl. ROU) = liabilities + equity
     for y in range(2021, year + 1):
         prev = model_year_flows(y)
         cash += prev["net_change"]
@@ -79,8 +79,9 @@ def model_year(year: int) -> dict[str, float]:
 
     ppe = (300 + 10 * i) * M
     oca, goodwill, intang, onca = 25 * M, 100 * M, 50 * M, 30 * M
+    rou = 40 * M               # pairs with the 40M operating lease liability (PL7)
     tca = cash + ar + inv + oca
-    assets = tca + ppe + goodwill + intang + onca
+    assets = tca + ppe + goodwill + intang + onca + rou
 
     accrued, oll_cur, ocl = 30 * M, 10 * M, 20 * M
     tcl = ap + accrued + oll_cur + ocl
@@ -95,7 +96,8 @@ def model_year(year: int) -> dict[str, float]:
         "da": da, "sbc": sbc, "capex": capex, "dividends": dividends,
         "cfo": cfo, "cfi": cfi, "cff": cff, "net_change": net_change,
         "cash": cash, "ar": ar, "inv": inv, "oca": oca, "tca": tca, "ppe": ppe,
-        "goodwill": goodwill, "intang": intang, "onca": onca, "assets": assets,
+        "goodwill": goodwill, "intang": intang, "onca": onca, "rou": rou,
+        "assets": assets,
         "ap": ap, "accrued": accrued, "oll_cur": oll_cur, "ocl": ocl, "tcl": tcl,
         "ltd": ltd, "oll_non": oll_non, "dtl": dtl, "oncl": oncl, "tl": tl,
         "re": re, "se": se, "le": tl + se,
@@ -148,6 +150,7 @@ def build_companyfacts(years: list[int] = YEARS, revenue_unit: str = "USD") -> d
         add_inst("PropertyPlantAndEquipmentNet", y, v["ppe"])
         add_inst("Goodwill", y, v["goodwill"])
         add_inst("IntangibleAssetsNetExcludingGoodwill", y, v["intang"])
+        add_inst("OperatingLeaseRightOfUseAsset", y, v["rou"])
         add_inst("OtherAssetsNoncurrent", y, v["onca"])
         add_inst("Assets", y, v["assets"])
         add_inst("AccountsPayableCurrent", y, v["ap"])

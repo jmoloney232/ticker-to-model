@@ -41,12 +41,19 @@ items:
     label: Cost of revenue
     statement: income
     shape: duration
-    required: true
+    required: false
+    missing_rule: omit
     tags:
       - CostOfRevenue
       - CostOfGoodsAndServicesSold
       - CostOfGoodsSold
-    notes: "CostOfGoodsSold deprecated in later taxonomies but present in older filed years."
+    notes: >
+      CostOfGoodsSold deprecated in later taxonomies but present in older filed
+      years. OPTIONAL by policy (owner decision, bulk scan): costs-by-nature
+      filers (VZ, DAL, MCD, SBUX, DIS, NEE — verified) have no COGS concept.
+      Absence => omit (never a zero: gross profit would collapse to revenue) and
+      the history is classified cost_structure: by_nature; downstream code
+      branches on that explicit field, not on a missing value.
 
   - name: gross_profit
     label: Gross profit
@@ -54,9 +61,11 @@ items:
     shape: duration
     required: false
     missing_rule: derive
+    on_derive_fail: omit
     derive: "revenue - cost_of_revenue"
     tags: [GrossProfit]
     cross_check: "reported GrossProfit vs revenue - cost_of_revenue (H5)"
+    notes: "on_derive_fail omit: for by_nature filers gross profit does not exist — absent, never zero."
 
   - name: research_and_development
     label: R&D expense
@@ -90,9 +99,18 @@ items:
     label: Operating income (EBIT)
     statement: income
     shape: duration
-    required: true
+    required: false
+    missing_rule: derive
     tags: [OperatingIncomeLoss]
+    derive: "pretax_income + interest_expense - interest_income"
     cross_check: "vs gross_profit - opex items (H5)"
+    notes: >
+      OPTIONAL by policy (owner decision): JNJ omits the subtotal in some years
+      (verified FY2022). The derive sweeps every other non-operating item —
+      one-time gains, impairments, equity-method income, FX — into EBIT; when it
+      runs, an ebit_derived warning propagates to the assembled output with the
+      absorbed magnitude (probed from NonoperatingIncomeExpense tags) so the
+      approximation's size is visible, not just its existence.
 
   - name: interest_expense
     label: Interest expense
@@ -137,6 +155,7 @@ items:
     tags:
       - IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
       - IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments
+    derive: "fallback: ...BeforeIncomeTaxesDomestic + ...BeforeIncomeTaxesForeign (MCD — verified — files only the geographic split; exact decomposition, composite in mapping.adjust)"
 
   - name: income_tax
     label: Income tax expense
@@ -188,6 +207,7 @@ items:
     unit: shares
     required: true
     tags: [WeightedAverageNumberOfSharesOutstandingBasic]
+    derive: "fallback: net_income / eps_basic when the WA tag is absent (dual-class filers tag counts per class — dimensional, invisible in companyfacts; verified GOOGL, META). Emits share_count_derived warning — per-share value provenance must be visible."
 
   - name: shares_diluted_wa
     label: Weighted-average shares, diluted
@@ -196,7 +216,7 @@ items:
     unit: shares
     required: false
     missing_rule: derive
-    derive: "shares_basic_wa (no dilution reported)"
+    derive: "net_income / eps_diluted (verified GOOGL, META; share_count_derived warning); last resort shares_basic_wa (no dilution reported)"
     tags: [WeightedAverageNumberOfDilutedSharesOutstanding]
     notes: "Diluted/basic ratio feeds the current-diluted share proxy (methodology: share_count)."
 
@@ -233,7 +253,13 @@ items:
     tags:
       - AccountsReceivableNetCurrent
       - ReceivablesNetCurrent
-    notes: "Drives DSO; zero_logged => DSO default degrades to 0 with a warning, not a crash."
+      - AccountsAndOtherReceivablesNetCurrent
+      - AccountsNotesAndLoansReceivableNetCurrent
+    notes: >
+      Drives DSO; zero_logged => DSO default degrades to 0 with a warning, not a
+      crash. AccountsAndOtherReceivablesNetCurrent: TGT; AccountsNotesAndLoans-
+      ReceivableNetCurrent: PEP (both caught live by PL8, verified against scan
+      payloads).
 
   - name: inventory
     label: Inventory, net
@@ -308,6 +334,26 @@ items:
     required: false
     missing_rule: zero_logged
     tags: [OperatingLeaseRightOfUseAsset]
+
+  - name: investments_combined_unsplit
+    label: Investment securities (current/noncurrent not split)
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: omit
+    tags:
+      - AvailableForSaleSecuritiesDebtSecurities
+      - MarketableSecurities
+    notes: >
+      Owner decision (item 8, bulk scan): some filers (NVDA FY2026 — verified)
+      tag their securities portfolio ONLY as a combined current+noncurrent
+      total. Mapped only when BOTH short_term_investments and
+      long_term_investments are absent (guard in mapping.adjust — prevents
+      double counting), with a prominent unsplit_investments warning. The
+      engine EXCLUDES this balance from net debt by default: treating merged
+      securities as current cash would overstate net cash and understate EV.
+      User-overridable later in the UI; the safe default is exclusion plus
+      disclosure, not a silent guess.
 
   - name: other_noncurrent_assets
     label: Other non-current assets
@@ -514,12 +560,17 @@ items:
     unit: shares
     required: true
     selection: latest
-    tags: ["dei:EntityCommonStockSharesOutstanding"]
+    tags:
+      - "dei:EntityCommonStockSharesOutstanding"
+      - CommonStockSharesOutstanding
     notes: >
       dei namespace, cover-page date. selection: latest — the single most recent fact
       across ALL form types (10-Qs included) wins, because the share proxy needs
       today's count, not the FY-end count. Basis of the current-diluted proxy:
       shares_outstanding × (shares_diluted_wa ÷ shares_basic_wa) of the latest FY.
+      us-gaap:CommonStockSharesOutstanding fallback: GOOGL (dual-class, no
+      undimensioned dei fact — verified). Last resort (META): latest-FY
+      shares_basic_wa with a share_count_derived warning — never silent.
 
   # ── Cash flow statement (duration) ─────────────────────────────────────────
   - name: d_and_a

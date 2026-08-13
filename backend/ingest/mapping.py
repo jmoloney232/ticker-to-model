@@ -26,7 +26,7 @@ from .facts import (
     select_instant_at,
     units_present,
 )
-from .models import Fact, FiscalPeriod, IngestWarning
+from .models import Coverage, Fact, FiscalPeriod, IngestWarning, UnmappedTag
 from .periods import duration_days, is_53_week
 from .schema import Schema, SchemaItem
 
@@ -36,6 +36,40 @@ CASH_TAGS = (
     "CashAndCashEquivalentsAtCarryingValue",
     "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents",
 )
+
+# Broader cash totals some filers reconcile their CF statement to. Used only as
+# H2 alternates (definition-mismatch rescue), never as the canonical cash item.
+# IncludingDisposalGroup... variant verified against TSLA, F, WMT scan payloads.
+ALT_CASH_TAGS = CASH_TAGS + (
+    ("CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+     "IncludingDisposalGroupAndDiscontinuedOperations"),
+)
+
+# Raw tags read by plausibility checks (validation PL1–PL8) but not part of any
+# canonical chain. First tag with a value per fiscal year wins.
+PLAUSIBILITY_PROBES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "lease_cost": ("duration", ("OperatingLeaseCost", "LeaseAndRentalExpense",
+                                "OperatingLeasesRentExpenseNet")),
+    "deferred_tax_assets": ("instant", ("DeferredIncomeTaxAssetsNet",
+                                        "DeferredTaxAssetsNetNoncurrent",
+                                        "DeferredTaxAssetsNet")),
+    "taxes_payable": ("instant", ("AccruedIncomeTaxesCurrent", "TaxesPayableCurrent",
+                                  "AccruedIncomeTaxesNoncurrent")),
+}
+
+# Raw tags consumed outside schema chains (composites, adjustments, probes,
+# H3 pairs). Anything not in a chain and not here is "unmapped" for coverage.
+CONSUMED_RAW_TAGS = frozenset(
+    tag for _, tags in PLAUSIBILITY_PROBES.values() for tag in tags
+) | frozenset({
+    "SellingAndMarketingExpense", "GeneralAndAdministrativeExpense",
+    "ShortTermBorrowings", "CommercialPaper", "LongTermDebtCurrent",
+    "LongTermDebtAndCapitalLeaseObligationsCurrent",
+    "FinanceLeaseLiabilityCurrent", "FinanceLeaseLiabilityNoncurrent",
+    "LongTermDebt", "OperatingLeaseLiabilityCurrent",
+    "OperatingLeaseLiabilityNoncurrent", "Depreciation",
+    "AmortizationOfIntangibleAssets", "NetIncomeLoss", "ProfitLoss",
+})
 
 
 @dataclass
@@ -47,6 +81,9 @@ class MappedHistory:
     prior_fy: int | None = None                 # fiscal year before the window (for ΔCash)
     prior_cash: float | None = None
     prior_alt_cash: float | None = None
+    probes: dict[str, dict[int, float]] | None = None   # probe name -> fy -> value
+    coverage: Coverage | None = None
+    cost_structure: str = "by_function"         # by_function | by_nature (owner decision, item 4)
 
 
 class _Ctx:
@@ -89,7 +126,35 @@ class _Ctx:
 # ── Derive registry (must match schema items with missing_rule: derive) ───────
 
 def _d_shares_diluted_wa(c: _Ctx):
+    # NI / diluted EPS recovers the WA count for dual-class filers whose share
+    # tags are dimensional (GOOGL, META — verified). Last resort: basic count.
+    ni, eps = c.val("net_income"), c.val("eps_diluted")
+    if ni is not None and eps:
+        c.warn("share_count_derived",
+               f"FY{c.fy}: diluted WA shares derived as net income / diluted EPS "
+               "(no undimensioned share tag filed).", item="shares_diluted_wa")
+        return ni / eps
     return c.val("shares_basic_wa")
+
+def _d_operating_income(c: _Ctx):
+    # Owner decision (item 5): EBIT ~= pretax + interest expense - interest
+    # income when the subtotal is not filed (JNJ FY2022 — verified). This
+    # SWEEPS every other non-operating item (one-time gains, impairments,
+    # equity-method income, FX) into EBIT. The warning carries the absorbed
+    # magnitude when the filer tags its non-operating total, so the size of the
+    # approximation is visible — not just its existence.
+    pretax = c.val("pretax_income")
+    if pretax is None:
+        return None
+    absorbed = (c.raw_duration("NonoperatingIncomeExpense")
+                or c.raw_duration("OtherNonoperatingIncomeExpense"))
+    size = (f"absorbed non-operating items: {absorbed:,.0f}" if absorbed is not None
+            else "absorbed magnitude unknown (no non-operating total filed)")
+    c.warn("ebit_derived",
+           f"FY{c.fy}: operating income not filed; EBIT derived as pretax + "
+           f"interest expense − interest income. This sweeps all other "
+           f"non-operating items into EBIT — {size}.", item="operating_income")
+    return pretax + c.val0("interest_expense") - c.val0("interest_income")
 
 def _d_gross_profit(c: _Ctx):
     r, cogs = c.val("revenue"), c.val("cost_of_revenue")
@@ -103,10 +168,16 @@ def _d_selling_general_admin(c: _Ctx):
     return (sm or 0.0) + (ga or 0.0)
 
 def _d_other_operating(c: _Ctx):
-    gp, oi = c.val("gross_profit"), c.val("operating_income")
-    if gp is None or oi is None:
+    # Residual to reported EBIT. by_function filers: base is gross profit.
+    # by_nature filers (no COGS/gross concept): base is revenue, so this bucket
+    # deliberately absorbs their entire cost block — correct semantics there.
+    oi = c.val("operating_income")
+    base = c.val("gross_profit")
+    if base is None:
+        base = c.val("revenue")
+    if base is None or oi is None:
         return None
-    return gp - c.val0("research_and_development") - c.val0("selling_general_admin") - oi
+    return base - c.val0("research_and_development") - c.val0("selling_general_admin") - oi
 
 def _d_other_nonoperating(c: _Ctx):
     pretax, oi = c.val("pretax_income"), c.val("operating_income")
@@ -220,6 +291,7 @@ def _d_net_change_in_cash(c: _Ctx):
 
 DERIVERS: list[tuple[str, callable]] = [
     ("shares_diluted_wa", _d_shares_diluted_wa),
+    ("operating_income", _d_operating_income),
     ("gross_profit", _d_gross_profit),
     ("selling_general_admin", _d_selling_general_admin),
     ("other_operating", _d_other_operating),
@@ -348,6 +420,9 @@ class _Mapper:
         for item in self.schema.items.values():
             if item.selection == "latest":
                 continue
+            if item.name == "investments_combined_unsplit":
+                continue    # owned by the guarded adjust() step — its combined
+                            # tags double-count when the split items exist
             if item.shape == "duration":
                 mapped = self.chain_durations(item)
                 for fy in run:
@@ -452,8 +527,58 @@ class _Mapper:
                     v["d_and_a"] = Fact(dep + (amort or 0.0), "USD", "derived",
                                         "derived")
 
+            # pretax composite (schema derive note): MCD — verified — files
+            # pretax ONLY as its Domestic + Foreign components. Exact
+            # decomposition, so no approximation warning (unlike derived EBIT).
+            if "pretax_income" not in v:
+                dom = ctx.raw_duration(
+                    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic")
+                foreign = ctx.raw_duration(
+                    "IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign")
+                if dom is not None:
+                    v["pretax_income"] = Fact(dom + (foreign or 0.0), "USD",
+                                              "derived", "derived")
+
+            # shares_basic_wa fallback (required item, so it lives here like
+            # d_and_a): dual-class filers tag WA shares per class — dimensional,
+            # invisible in companyfacts — but consolidated EPS is undimensioned
+            # (GOOGL, META — verified). Per-share value is the app's headline
+            # output; when its share count is derived, the warning makes that
+            # provenance visible all the way to the UI.
+            if "shares_basic_wa" not in v:
+                ni_f, eps_f = v.get("net_income"), v.get("eps_basic")
+                if ni_f is not None and eps_f is not None and eps_f.value:
+                    v["shares_basic_wa"] = Fact(ni_f.value / eps_f.value, "shares",
+                                                "derived", "derived")
+                    ctx.warn("share_count_derived",
+                             f"FY{fy}: basic WA shares derived as net income / basic "
+                             "EPS (no undimensioned share tag filed).",
+                             item="shares_basic_wa")
+
+            # investments_combined_unsplit (owner decision, item 8): mapped ONLY
+            # when both the current and noncurrent investment items are absent —
+            # otherwise the combined tag double-counts the split ones. The engine
+            # excludes this balance from net debt by default (merged securities
+            # treated as current cash would overstate net cash / understate EV).
+            sti = v.get("short_term_investments")
+            lti = v.get("long_term_investments")
+            if ((sti is None or sti.source != "tag")
+                    and (lti is None or lti.source != "tag")):
+                got = self.chain_instant_at(
+                    self.schema.items["investments_combined_unsplit"],
+                    self.fye_map[fy])
+                if got is not None:
+                    tag, sel, _fuzzy = got
+                    v["investments_combined_unsplit"] = self._fact_from(tag, sel)
+                    ctx.warn("unsplit_investments",
+                             f"FY{fy}: {sel.value:,.0f} of investment securities "
+                             "are tagged only as a combined current+noncurrent "
+                             "total; excluded from net debt by default — "
+                             "override available.",
+                             item="investments_combined_unsplit")
+
     # ── derivers + missing rules ───────────────────────────────────────────
-    def derive_and_fill(self, run: list[int]) -> None:
+    def derive_and_fill(self, run: list[int]) -> list[int]:
         for fy in run:
             ctx = _Ctx(self, fy)
             for name, fn in DERIVERS:
@@ -466,15 +591,19 @@ class _Mapper:
                     self.values[fy][name] = Fact(result, item.unit, "derived", "derived",
                                                  end=end)
 
+        run = self._trim_required(run)
+
         for fy in run:
             for item in self.schema.items.values():
                 if item.selection == "latest" or item.name in self.values[fy]:
                     continue
-                if item.required:
+                if item.required:      # unreachable after _trim_required; defense in depth
                     raise MissingRequiredItemError(self.ticker, item.name, fy,
                                                    list(item.tags))
                 if item.missing_rule == "omit":
                     continue
+                if item.missing_rule == "derive" and item.on_derive_fail == "omit":
+                    continue           # e.g. gross_profit for by_nature filers: absent, never zero
                 end = self.fye_map[fy] if item.shape == "instant" else None
                 self.values[fy][item.name] = Fact(0.0, item.unit, "", "zero_logged",
                                                   end=end)
@@ -483,12 +612,61 @@ class _Mapper:
                     message=(f"FY{fy}: {item.name} unmapped (tried: "
                              f"{', '.join(item.tags) or 'derivation only'}); treated as 0."),
                     fiscal_year=fy, item=item.name))
+        return run
+
+    def _trim_required(self, run: list[int]) -> list[int]:
+        """Owner decision (item 6): required items missing only in the OLDEST
+        years trim the window (same policy as history gaps, >= 3-year floor,
+        warned). A required item missing in a recent year still hard-errors —
+        we keep the most recent run in which every required item resolves."""
+        missing_by_fy = {
+            fy: sorted(item.name for item in self.schema.items.values()
+                       if item.required and item.selection == "annual"
+                       and item.name not in self.values[fy])
+            for fy in run
+        }
+        start = 0
+        for i, fy in enumerate(run):
+            if missing_by_fy[fy]:
+                start = i + 1
+        if start == 0:
+            return run
+        clean = run[start:]
+        last_bad = run[start - 1]
+        if len(clean) < MIN_YEARS:
+            name = missing_by_fy[last_bad][0]
+            raise MissingRequiredItemError(self.ticker, name, last_bad,
+                                           list(self.schema.items[name].tags))
+        dropped = run[:start]
+        items = sorted({n for fy in dropped for n in missing_by_fy[fy]})
+        self.warnings.append(IngestWarning(
+            code="history_trimmed_required",
+            message=(f"History trimmed to FY{clean[0]}–FY{clean[-1]}: required "
+                     f"item(s) {', '.join(items)} not filed in "
+                     f"FY{dropped[0]}–FY{dropped[-1]}."),
+        ))
+        for fy in dropped:
+            del self.values[fy]
+        return clean
 
     # ── extras for validation ──────────────────────────────────────────────
     def restatement_warnings(self, run: list[int]) -> None:
         for fy in run:
             for name, f in self.values[fy].items():
-                if f.was_restated:
+                if not f.was_restated:
+                    continue
+                if f.unit in ("shares", "USD/shares"):
+                    # Owner decision (item 7): share/EPS-unit "restatements" are
+                    # split recasts (NVDA 10:1 — verified), not restatements.
+                    self.warnings.append(IngestWarning(
+                        code="split_adjustment",
+                        message=(f"FY{fy}: {name} recast in later filings "
+                                 f"({f.first_filed_value:,.0f} → {f.value:,.0f}) — "
+                                 "consistent with a stock split; as-adjusted values "
+                                 "in use."),
+                        fiscal_year=fy, item=name,
+                        detail={"delta_pct": f.restatement_delta_pct}))
+                else:
                     self.warnings.append(IngestWarning(
                         code="restated",
                         message=(f"FY{fy}: {name} was restated — latest filing shows "
@@ -501,8 +679,16 @@ class _Mapper:
         run = self.determine_periods()
         self.map_items(run)
         self.adjust(run)
-        self.derive_and_fill(run)
+        run = self.derive_and_fill(run)
         self.restatement_warnings(run)
+
+        # Owner decision (item 4): explicit cost-structure classification so
+        # downstream code branches on a deliberate field, never on a missing
+        # value. Mixed windows (COGS filed in some years only, e.g. GE FY2021
+        # gap) classify as by_nature — partial gross data is not modeled.
+        cost_structure = ("by_function"
+                          if all("cost_of_revenue" in self.values[fy] for fy in run)
+                          else "by_nature")
 
         ni_pairs: dict[int, tuple[float, float]] = {}
         alt_cash: dict[int, float] = {}
@@ -512,11 +698,12 @@ class _Mapper:
             if nil is not None and pl is not None:
                 ni_pairs[fy] = (nil, pl)
             chosen = self.values[fy]["cash_and_equivalents"].tag
-            for tag in CASH_TAGS:
+            for tag in ALT_CASH_TAGS:
                 if f"us-gaap:{tag}" != chosen:
                     alt = self.raw_instant(tag, self.fye_map[fy])
                     if alt is not None:
                         alt_cash[fy] = alt
+                        break          # priority order; first alternate wins
 
         prior_fy = run[0] - 1
         prior_cash = prior_alt = None
@@ -526,9 +713,11 @@ class _Mapper:
             got = self.chain_instant_at(self.schema.items["cash_and_equivalents"], prior_end)
             if got:
                 prior_cash = got[1].value
-                for tag in CASH_TAGS:
+                for tag in ALT_CASH_TAGS:
                     if f"us-gaap:{tag}" != got[0]:
                         prior_alt = self.raw_instant(tag, prior_end)
+                        if prior_alt is not None:
+                            break
 
         periods = []
         for fy in run:
@@ -554,7 +743,74 @@ class _Mapper:
         return MappedHistory(
             periods=periods, warnings=self.warnings, ni_pairs=ni_pairs,
             alt_cash=alt_cash, prior_fy=prior_fy if prior_cash is not None else None,
-            prior_cash=prior_cash, prior_alt_cash=prior_alt)
+            prior_cash=prior_cash, prior_alt_cash=prior_alt,
+            probes=self.collect_probes(run), coverage=self.compute_coverage(periods),
+            cost_structure=cost_structure)
+
+    # ── plausibility probes (validation PL checks) ─────────────────────────
+    def collect_probes(self, run: list[int]) -> dict[str, dict[int, float]]:
+        out: dict[str, dict[int, float]] = {}
+        for name, (shape, tags) in PLAUSIBILITY_PROBES.items():
+            per_fy: dict[int, float] = {}
+            for fy in run:
+                for tag in tags:
+                    v = (self.raw_duration(tag, fy) if shape == "duration"
+                         else self.raw_instant(tag, self.fye_map[fy]))
+                    if v is not None:
+                        per_fy[fy] = v
+                        break
+            out[name] = per_fy
+        return out
+
+    # ── coverage metric (spec 01, Outputs) ─────────────────────────────────
+    def compute_coverage(self, periods: list[FiscalPeriod]) -> Coverage:
+        p = periods[-1]
+
+        def residual(stmt: dict[str, Fact], names: tuple[str, ...]) -> float:
+            return sum(abs(f.value) for n in names
+                       if (f := stmt.get(n)) is not None and f.source == "derived")
+
+        def share(total: float | None, resid: float) -> float:
+            if not total:
+                return 1.0
+            return min(1.0, max(0.0, 1.0 - resid / abs(total)))
+
+        assets_share = share(p.value("total_assets"),
+                             residual(p.balance, ("other_current_assets",
+                                                  "other_noncurrent_assets")))
+        liab_share = share(p.value("total_liabilities"),
+                           residual(p.balance, ("other_current_liabilities",
+                                                "other_noncurrent_liabilities")))
+        opex = (p.value("revenue") or 0.0) - (p.value("operating_income") or 0.0)
+        exp_share = (share(opex, residual(p.income, ("other_operating",)))
+                     if opex > 0 else None)
+        rev = p.income.get("revenue")
+        rev_share = 1.0 if rev is not None and rev.source == "tag" else 0.0
+
+        consumed = CONSUMED_RAW_TAGS | {
+            tag for item in self.schema.items.values()
+            for ns, tag in item.namespaced_tags() if ns == "us-gaap"}
+        unmapped: list[UnmappedTag] = []
+        for tag in self.payload.get("facts", {}).get("us-gaap", {}):
+            if tag in consumed:
+                continue
+            v = self.raw_duration(tag, p.fiscal_year)
+            shape = "duration"
+            if v is None:
+                v = self.raw_instant(tag, p.end)
+                shape = "instant"
+            if v is not None and v != 0.0:
+                unmapped.append(UnmappedTag(tag=tag, value=v, shape=shape))
+        unmapped.sort(key=lambda u: abs(u.value), reverse=True)
+
+        return Coverage(
+            fiscal_year=p.fiscal_year,
+            assets_named_share=assets_share,
+            liabilities_named_share=liab_share,
+            expenses_named_share=exp_share,
+            revenue_named_share=rev_share,
+            top_unmapped=unmapped[:10],
+        )
 
 
 def map_history(payload: dict, schema: Schema, anchor: str | None, ticker: str,

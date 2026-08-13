@@ -20,9 +20,12 @@ def test_every_derive_item_has_an_executable_deriver():
 
 
 def test_required_items_are_the_expected_backbone():
+    # cost_of_revenue and operating_income became optional by owner decision
+    # (bulk scan items 4 and 5): by-nature filers have no COGS concept, and
+    # some filers omit the EBIT subtotal in some years.
     schema = load_schema()
     required = {i.name for i in schema.items.values() if i.required}
-    backbone = {"revenue", "cost_of_revenue", "operating_income", "pretax_income",
+    backbone = {"revenue", "pretax_income",
                 "income_tax", "net_income", "shares_basic_wa", "cash_and_equivalents",
                 "total_assets", "stockholders_equity", "shares_outstanding",
                 "d_and_a", "cash_from_operations", "capex", "cash_from_investing",
@@ -33,7 +36,10 @@ def test_required_items_are_the_expected_backbone():
 def test_namespaces_resolve():
     schema = load_schema()
     shares = schema.items["shares_outstanding"]
-    assert shares.namespaced_tags() == [("dei", "EntityCommonStockSharesOutstanding")]
+    assert shares.namespaced_tags() == [
+        ("dei", "EntityCommonStockSharesOutstanding"),
+        ("us-gaap", "CommonStockSharesOutstanding"),   # GOOGL dual-class fallback
+    ]
     assert shares.selection == "latest"
     rev = schema.items["revenue"]
     assert rev.namespaced_tags()[0] == (

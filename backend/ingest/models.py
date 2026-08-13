@@ -99,6 +99,34 @@ class ValidationReport:
 
 
 @dataclass
+class UnmappedTag:
+    """A filed us-gaap tag no chain consumes, ranked by magnitude for review."""
+
+    tag: str
+    value: float
+    shape: str                    # duration | instant
+
+
+@dataclass
+class Coverage:
+    """How much of the filing landed in named line items vs. residual buckets.
+
+    Shares are 1 − |residual other_* buckets we derived| / total: a filer's own
+    tagged "other" line counts as mapped (that is their bucket); a residual WE
+    had to derive is the unmapped remainder. A falling share is the signal that
+    a filer uses tags the schema doesn't know about (spec 01).
+    Computed on the latest fiscal year.
+    """
+
+    fiscal_year: int
+    assets_named_share: float
+    liabilities_named_share: float
+    expenses_named_share: float | None    # None when revenue − EBIT is non-positive
+    revenue_named_share: float
+    top_unmapped: list[UnmappedTag] = field(default_factory=list)
+
+
+@dataclass
 class FinancialHistory:
     company: CompanyMeta
     periods: list[FiscalPeriod]           # ascending fiscal_year, gapless
@@ -106,6 +134,10 @@ class FinancialHistory:
     warnings: list[IngestWarning]
     validation: ValidationReport
     staleness: dict[str, Tier]            # per EDGAR endpoint
+    coverage: Coverage | None = None
+    cost_structure: str = "by_function"   # by_function | by_nature — downstream
+                                          # code (engine margins, Excel IS block,
+                                          # UI) branches on this explicit field
 
     @property
     def latest(self) -> FiscalPeriod:

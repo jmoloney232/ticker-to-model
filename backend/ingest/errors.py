@@ -73,6 +73,16 @@ class ValidationFailedError(IngestError):
         self.report = report
 
 
+class KnownUnsupportedError(IngestError):
+    """Filer on the known-unsupported list (ingest/known_unsupported.yaml)."""
+
+    def __init__(self, ticker: str, reason: str):
+        super().__init__(
+            f"{ticker} uses filing conventions we don't support yet: {reason}",
+            {"ticker": ticker, "reason": reason},
+        )
+
+
 class EdgarUnavailableError(IngestError):
     def __init__(self, what: str):
         super().__init__(

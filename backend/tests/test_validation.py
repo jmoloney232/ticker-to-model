@@ -143,6 +143,7 @@ def test_h7_flags_53_week_year_as_info_only():
         ("OtherAssetsCurrent", "oca"), ("AssetsCurrent", "tca"),
         ("PropertyPlantAndEquipmentNet", "ppe"), ("Goodwill", "goodwill"),
         ("IntangibleAssetsNetExcludingGoodwill", "intang"),
+        ("OperatingLeaseRightOfUseAsset", "rou"),
         ("OtherAssetsNoncurrent", "onca"), ("Assets", "assets"),
         ("AccountsPayableCurrent", "ap"), ("AccruedLiabilitiesCurrent", "accrued"),
         ("OperatingLeaseLiabilityCurrent", "oll_cur"),
@@ -164,6 +165,7 @@ def test_h7_flags_53_week_year_as_info_only():
     assert report.overall in ("pass", "pass_with_warnings")
 
 
-def test_report_always_contains_all_seven_checks(clean_facts):
+def test_report_always_contains_every_check(clean_facts):
     report = _validate(clean_facts)
-    assert [r.check_id for r in report.results] == ["H1", "H2", "H3", "H4", "H5", "H6", "H7"]
+    assert [r.check_id for r in report.results] == (
+        [f"H{i}" for i in range(1, 8)] + [f"PL{i}" for i in range(1, 9)])

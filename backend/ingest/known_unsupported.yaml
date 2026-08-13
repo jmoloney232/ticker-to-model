@@ -1,0 +1,10 @@
+# Filers the pipeline cannot honestly support yet. The app shows the reason
+# verbatim instead of a generic error (owner decision, item 5 addendum).
+# Data file on purpose — additions here must never require a code change.
+
+- ticker: XOM
+  reason: >
+    Exxon Mobil tags its annual income statement under custom extension tags
+    that standard us-gaap chains cannot see (verified: annual revenue absent
+    from every standard revenue tag in its companyfacts). Extension-taxonomy
+    support is a later phase.
