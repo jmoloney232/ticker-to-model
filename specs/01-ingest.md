@@ -24,9 +24,32 @@ restatement resolution, and the validation gate. Knows nothing about valuation.
   `was_restated: bool`, `restatement_delta_pct` when applicable
 - `warnings`: structured list (unmapped optional items, restatements >1%, 53-week years,
   cross-check mismatches) — flows through engine to UI and workbook
-- `validation`: the spec 07 report (must be status=pass or pass-with-warnings)
+- `validation`: the spec 07 report (must be status=pass or pass-with-warnings),
+  including the PL plausibility warnings
+- `cost_structure`: `by_function` (COGS/gross profit exist) or `by_nature` (no COGS
+  concept — VZ, DAL, MCD, SBUX, DIS; verified by bulk scan). **Owner decision:** an
+  explicit field, never an implicit absence — the engine's margin defaults, the Excel
+  income-statement block, and the UI all branch on it. COGS and gross profit are
+  *absent* for by_nature filers (omit, never zero: gross profit must not collapse to
+  revenue). A window with COGS in only some years classifies by_nature. **Phase 2
+  must handle both shapes** (gross-margin defaults swap to operating-margin defaults).
+- `coverage`: how much of the filing landed in **named** line items vs. residual
+  buckets, computed on the latest fiscal year — `assets_named_share`,
+  `liabilities_named_share`, `expenses_named_share`, `revenue_named_share`
+  (share = 1 − |residual `other_*` buckets we had to derive| / total; a filer's own
+  tagged "other" line counts as mapped), plus the top unmapped us-gaap tags by
+  absolute magnitude. Surfaced in the web app as "N% of reported line items
+  mapped". **A falling coverage number is the signal that a filer uses tags the
+  schema doesn't know about** — it is the early-warning metric for chain gaps
 
 ## Pipeline
+
+### 0. Known-unsupported gate
+
+`ingest/known_unsupported.yaml` (data file, never hardcoded) lists filers whose
+conventions we cannot honestly support yet, with the reason shown verbatim to the
+user (`KnownUnsupportedError`) instead of a generic failure. Current: XOM (annual
+statements under custom extension tags — extension-taxonomy support is a later phase).
 
 ### 1. Ticker → CIK
 
@@ -95,7 +118,26 @@ yields a fact for the period wins. Record which tag won (provenance).
   the schema (e.g. `treat_as_zero_logged`, `derive`, `omit`) and log an
   `unmapped_item` warning with the tags tried.
 - **Composite items** (schema `derive: sum(...)` etc.): compute from components per the
-  schema expression; component provenance is retained.
+  schema expression; component provenance is retained. Required items may resolve via
+  documented composites (d_and_a: MSFT's split Depreciation + Amortization tags;
+  pretax_income: MCD's Domestic + Foreign split; shares_basic_wa: net income ÷ basic
+  EPS for dual-class filers whose share tags are dimensional — GOOGL, META — always
+  with a `share_count_derived` warning, since per-share value is the headline output
+  and its provenance must be visible).
+- **Derived EBIT** (owner decision): when `OperatingIncomeLoss` is not filed (JNJ,
+  some years), EBIT = pretax + interest expense − interest income. This sweeps every
+  other non-operating item into EBIT; the `ebit_derived` warning propagates to the
+  assembled output and carries the absorbed magnitude (probed from the filer's
+  non-operating tags) so the size of the approximation is visible, not just its
+  existence.
+- **Unsplit investments** (owner decision): filers that tag securities only as a
+  combined current+noncurrent total (NVDA FY2026) get `investments_combined_unsplit`,
+  mapped only when the split items are absent, **excluded from net debt by default**
+  with an `unsplit_investments` disclosure — merged securities treated as current
+  cash would overstate net cash and understate EV. User-overridable later.
+- **Split adjustments** (owner decision): share/EPS-unit facts restated by later
+  filings are split recasts, labeled `split_adjustment` — not restatements, excluded
+  from H6.
 - **Cross-checks** (schema `cross_check`): where both a reported aggregate and a derived
   value exist (e.g. `GrossProfit` vs `revenue − cost_of_revenue`), compare and emit a
   warning above tolerance (spec 07 owns tolerances).
@@ -111,6 +153,11 @@ gapless run** of usable years, up to 5 — never interpolate across a gap. If a 
 truncates the run below the 5 requested, build with the shorter run and emit a
 `history_trimmed_at_gap` warning naming the gap year; if the run is shorter than 3,
 `InsufficientHistoryError` naming the gap.
+
+The same policy applies to **required items** (owner decision): a required item
+missing only in the *oldest* years trims the window (`history_trimmed_required`
+warning, 3-year floor); missing in a recent year still hard-errors — we keep the most
+recent run in which every required item resolves.
 
 ### 7. Validation gate
 
@@ -132,6 +179,7 @@ loud, specific, never a silently-untied model.
 
 | Error | Trigger | User-facing behavior |
 |---|---|---|
+| `KnownUnsupportedError` | Ticker in known_unsupported.yaml | The listed reason, verbatim |
 | `UnknownTickerError` | Not in company_tickers.json | "Ticker not found" |
 | `FinancialCompanyError` | SIC in rejection table | Category-specific rejection message |
 | `UnsupportedCurrencyError` | No USD facts | Clear unsupported message |

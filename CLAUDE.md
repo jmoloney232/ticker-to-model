@@ -38,7 +38,7 @@ Build and verify each phase before starting the next.
 | Phase | Module | Status |
 |---|---|---|
 | 0 | Specs, schema, methodology | done (owner-reviewed) |
-| 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done — 74 tests incl. real-fixture suite; awaiting owner review** |
+| 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done + hardened — 118 tests, 9 real-filing fixtures, 29-ticker bulk scan (20/27 non-financials build); awaiting owner review of re-scan** |
 | 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | not started |
 | 3 | `backend/excel/` — formula-driven workbook | not started |
 | 4 | `backend/app/` + `frontend/` — API, dashboard, download | not started |
@@ -110,6 +110,21 @@ deliberately; never let them drift silently.**
   EV→equity bridge. Tested invariant.
 - **Operating leases:** excluded from net debt (consistent with unadjusted EBITDA);
   warning surfaced when lease liability > 25% of total debt.
+- **Cost structure (owner decision):** COGS is optional; by-nature filers (VZ, DAL,
+  MCD…) classify `cost_structure: by_nature` — an explicit field downstream code
+  branches on. Phase 2 must handle both shapes (gross vs. operating margin defaults).
+- **Derived EBIT (owner decision):** pretax + interest when the subtotal isn't filed;
+  `ebit_derived` warning propagates with the absorbed non-operating magnitude.
+- **H2 outcomes are three-way:** clean tie / definitional cash mismatch (warn,
+  restricted-cash & disposal-group variants) / real break (fail).
+- **Dual-class shares:** WA counts derived as NI÷EPS when share tags are dimensional
+  (GOOGL, META); always warned (`share_count_derived`) — per-share provenance visible.
+- **Unsplit investments (owner decision):** combined current+noncurrent securities
+  totals (NVDA) map to `investments_combined_unsplit`, excluded from net debt by
+  default with disclosure.
+- **Split adjustments:** share/EPS-unit recasts are labeled splits, not restatements.
+- **Known-unsupported list:** `ingest/known_unsupported.yaml` (XOM — extension-tag
+  filer) returns an honest message, never a generic error.
 
 ## Scope guardrails (v1)
 

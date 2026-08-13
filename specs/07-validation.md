@@ -23,11 +23,11 @@ banner (spec 06) and the workbook Cover table (spec 05).
 | ID | Check | Severity |
 |---|---|---|
 | H1 | **Balance sheet balances:** total assets = total liabilities + total equity (incl. NCI + preferred) | fail |
-| H2 | **Cash flow ties:** CFO + CFI + CFF + FX effect = Δcash, where Δcash uses the *same cash definition* as the mapped cash item (the 2016 restricted-cash ASU changed the total—chain-consistency matters, see spec 02 notes) | fail |
+| H2 | **Cash flow ties:** CFO + CFI + CFF + FX effect = Δcash. **Three distinguishable outcomes (owner decision):** `pass` — ties to the BS cash delta directly; `warn` — a *definitional* mismatch: ties only under a broader cash definition (restricted cash / disposal-group variants), or the filer's own reported net-change ties while our narrower BS cash delta does not (verified AMZN/TSLA/F/WMT); `fail` — ties to nothing: a real break. The detail says which outcome and why | fail |
 | H3 | **Net income consistency:** `NetIncomeLoss` + NCI income = `ProfitLoss` where both were reported. Honest note: `companyfacts` facts are statement-agnostic, so the classic "NI matches between IS and CF" is reframed as tag-level consistency (H3) plus the roll-forward (H4) | fail |
 | H4 | **Retained-earnings roll-forward (soft):** RE_t ≈ RE_{t−1} + NI_t − dividends_t. Legitimately noisy (share retirements, some OCI reclassifications, ASU adoptions hit RE directly) → warn-only | warn |
 | H5 | **Schema cross-checks** (from spec 02): reported vs derived gross profit; reported vs derived total liabilities; sum of mapped current assets vs reported total | warn |
-| H6 | **Restatement delta** >1% between latest-filed and first-filed value (set in ingest, reported here) | warn |
+| H6 | **Restatement delta** >1% between latest-filed and first-filed value (set in ingest, reported here). Share/EPS-unit recasts are excluded — they are split adjustments (owner decision; NVDA 10:1 verified), labeled `split_adjustment` in warnings | warn |
 | H7 | **53-week year** detected | info |
 
 **Tolerances (H1, H2, H3):** `max($1M, 0.1% of total assets)`. EDGAR facts are exact
@@ -38,6 +38,32 @@ the residual exceeds 5% of total equity. **H5:** warn above the H1 tolerance.
 A `fail` blocks the model: ingest raises `ValidationError` carrying the report — the
 user sees which identity broke, by how much, in which year, with per-item provenance
 (tag + accession) so the failure is diagnosable, not just loud.
+
+## Plausibility checks (PL1–PL8) — historical, warn-only
+
+A different failure class from the tie-outs: **arithmetic checks cannot see
+misclassification**, because residual buckets keep statements balanced no matter
+where a value lands (the KHC long-term-debt gap balanced perfectly while $20B sat
+in a residual). PL checks look for **asymmetric presence** — an item that implies
+another item exists, where the other resolved to zero. Always warnings, never
+errors: they flag combinations for human review. Rules are one-directional; the
+reverse implication usually has legitimate cases (noted per rule).
+
+| ID | Rule | Reasoning / false-positive notes |
+|---|---|---|
+| PL1 | Material interest expense, zero gross debt | Paying interest implies borrowings. Reverse not flagged (zero-coupon, capitalized interest). FP risk: interest on uncertain tax positions — floored by tolerance |
+| PL2 | D&A or capex, zero PP&E + intangibles + ROU | Depreciation needs a depreciable base; goodwill excluded (not amortized). All three bases must be zero, so intangible-only amortizers stay quiet |
+| PL3 | Material revenue, COGS ≤ 0 | Selling something costs something — for `by_function` filers. Gated on `cost_structure` (reports `skipped` for by_nature filers, who have no COGS concept); catches tagged zeros on filers that should have one |
+| PL4 | Debt issued/repaid in financing, debt never on any balance sheet | Repaying debt implies debt existed. FP: commercial paper churned intra-year never shows at an FYE — one reason this is warn-only |
+| PL5 | Lease cost (probe tags), zero lease liability and ROU | ASC 842 books lease balances; guarded to periods ending ≥2020 (pre-842 operating leases were legitimately off-BS) |
+| PL6 | Material tax expense, zero DTL + DTA + taxes payable (probes) | Tax expense implies a deferred position or payable. Highest FP risk of the set (payables fold into accrued) — review-level by design |
+| PL7 | ROU asset XOR lease liability | ASC 842 books them together; a hard zero on one side is a mapping gap, not economics |
+| PL8 | Revenue every year, AR zero every year | Accrual revenue leaves receivables; persistent zero suggests an unchained AR tag. Single-year zeros stay quiet |
+
+Materiality floor for "present": the H-check tolerance `max($1M, 0.1%·assets)`.
+Probe tags (lease cost, deferred tax assets, taxes payable) are read raw by the
+mapper (`PLAUSIBILITY_PROBES`) — they are check inputs, not canonical items.
+Empirical baseline: zero PL false positives across the MSFT/KO/COST/KHC fixtures.
 
 ## Projection & valuation checks
 

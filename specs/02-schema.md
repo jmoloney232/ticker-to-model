@@ -16,8 +16,8 @@ weaken.
 
 ## Outputs
 
-- The canonical item definitions used by the mapping step (spec 01 §5): 65 line items
-  (18 income statement, 32 balance sheet, 15 cash flow), each with an ordered tag chain
+- The canonical item definitions used by the mapping step (spec 01 §5): 66 line items
+  (18 income statement, 33 balance sheet, 15 cash flow), each with an ordered tag chain
   and a documented missing-value rule.
 
 ## Design rules
@@ -57,22 +57,22 @@ weaken.
 | Item | Req | Tag chain | Missing |
 |---|---|---|---|
 | revenue | ✓ | RevenueFromContractWithCustomerExcludingAssessedTax → Revenues → SalesRevenueNet → RevenueFromContractWithCustomerIncludingAssessedTax | — |
-| cost_of_revenue | ✓ | CostOfRevenue → CostOfGoodsAndServicesSold → CostOfGoodsSold | — |
-| gross_profit | | GrossProfit | derive: revenue − COGS (+ cross-check) |
+| cost_of_revenue | | CostOfRevenue → CostOfGoodsAndServicesSold → CostOfGoodsSold | omit — by_nature filers (VZ, DAL, MCD, SBUX, DIS) have no COGS; history classified `cost_structure: by_nature` |
+| gross_profit | | GrossProfit | derive: revenue − COGS (+ cross-check); on derive-fail: omit, never zero |
 | research_and_development | | ResearchAndDevelopmentExpense | zero_logged |
 | selling_general_admin | | SellingGeneralAndAdministrativeExpense | derive: Selling + G&A pieces |
 | other_operating | | OtherOperatingIncomeExpenseNet | derive: residual to reported EBIT |
-| operating_income | ✓ | OperatingIncomeLoss | — (+ cross-check) |
+| operating_income | | OperatingIncomeLoss | derive: pretax + interest exp − interest inc (JNJ; sweeps non-operating items into EBIT — ebit_derived warning carries absorbed magnitude) |
 | interest_expense | | InterestExpense → InterestExpenseNonoperating → InterestAndDebtExpense → InterestExpenseDebt | zero_logged |
 | interest_income | | InvestmentIncomeInterest → InvestmentIncomeInterestAndDividend | zero_logged |
 | other_nonoperating | | NonoperatingIncomeExpense → OtherNonoperatingIncomeExpense | derive: residual to pretax |
-| pretax_income | ✓ | IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest → …MinorityInterestAndIncomeLossFromEquityMethodInvestments | — |
+| pretax_income | ✓ | IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest → …MinorityInterestAndIncomeLossFromEquityMethodInvestments | composite fallback: Domestic + Foreign split (MCD) |
 | income_tax | ✓ | IncomeTaxExpenseBenefit | — |
 | net_income | ✓ | NetIncomeLoss → ProfitLoss (subtract NCI when this wins) | — |
 | nci_income | | NetIncomeLossAttributableToNoncontrollingInterest | zero_logged |
 | eps_basic / eps_diluted | | EarningsPerShareBasic / EarningsPerShareDiluted | omit |
-| shares_basic_wa | ✓ | WeightedAverageNumberOfSharesOutstandingBasic | — |
-| shares_diluted_wa | | WeightedAverageNumberOfDilutedSharesOutstanding | derive: = basic (no dilution) |
+| shares_basic_wa | ✓ | WeightedAverageNumberOfSharesOutstandingBasic | composite fallback: NI ÷ basic EPS (GOOGL, META dual-class — share_count_derived warning) |
+| shares_diluted_wa | | WeightedAverageNumberOfDilutedSharesOutstanding | derive: NI ÷ diluted EPS (warned), last resort = basic |
 
 ### Balance sheet (instants)
 
@@ -80,7 +80,7 @@ weaken.
 |---|---|---|---|
 | cash_and_equivalents | ✓ | CashAndCashEquivalentsAtCarryingValue → CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents | — (chain-consistency rule 5) |
 | short_term_investments | | ShortTermInvestments → OtherShortTermInvestments → MarketableSecuritiesCurrent → AvailableForSaleSecuritiesDebtSecuritiesCurrent | zero_logged |
-| accounts_receivable | | AccountsReceivableNetCurrent → ReceivablesNetCurrent | zero_logged |
+| accounts_receivable | | AccountsReceivableNetCurrent → ReceivablesNetCurrent → AccountsAndOtherReceivablesNetCurrent (TGT) → AccountsNotesAndLoansReceivableNetCurrent (PEP) | zero_logged |
 | inventory | | InventoryNet | zero_logged |
 | other_current_assets | | OtherAssetsCurrent | derive: residual |
 | total_current_assets | | AssetsCurrent | derive: sum (unclassified BS → warn) |
@@ -89,6 +89,7 @@ weaken.
 | intangibles | | IntangibleAssetsNetExcludingGoodwill → FiniteLivedIntangibleAssetsNet | zero_logged |
 | long_term_investments | | LongTermInvestments → MarketableSecuritiesNoncurrent | zero_logged |
 | operating_lease_rou | | OperatingLeaseRightOfUseAsset | zero_logged |
+| investments_combined_unsplit | | AvailableForSaleSecuritiesDebtSecurities → MarketableSecurities | omit — mapped only when split items absent (NVDA FY2026); excluded from net debt by default, unsplit_investments disclosure |
 | other_noncurrent_assets | | OtherAssetsNoncurrent | derive: residual |
 | total_assets | ✓ | Assets | — |
 | accounts_payable | | AccountsPayableCurrent → AccountsPayableTradeCurrent → AccountsPayableAndAccruedLiabilitiesCurrent (combined → accrued forced 0, warned) | zero_logged |
@@ -109,7 +110,7 @@ weaken.
 | noncontrolling_interest | | MinorityInterest | zero_logged |
 | retained_earnings | | RetainedEarningsAccumulatedDeficit | omit (H4 → skipped) |
 | total_liabilities_and_equity | | LiabilitiesAndStockholdersEquity | derive: sum |
-| shares_outstanding | ✓ | **dei:**EntityCommonStockSharesOutstanding | — (share-proxy input; `selection: latest` — most recent fact across all forms, incl. 10-Qs) |
+| shares_outstanding | ✓ | **dei:**EntityCommonStockSharesOutstanding → CommonStockSharesOutstanding (GOOGL) | — (share-proxy input; `selection: latest`; last resort: latest-FY basic WA, warned — META) |
 
 ### Cash flow statement (durations)
 
