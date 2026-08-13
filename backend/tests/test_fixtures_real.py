@@ -139,6 +139,82 @@ class TestKHC:
         assert h.validation.overall in ("pass", "pass_with_warnings")
 
 
+class TestGOOGL:
+    """Dual-class filer: no undimensioned dei cover count, and no undimensioned
+    WA-share fact in FY2021 — exercises the NI÷EPS share derivation and the
+    us-gaap cover fallback (item 3) on real data."""
+
+    def test_builds_with_derived_fy2021_shares_and_usgaap_cover_count(self):
+        h = build_financial_history("GOOGL", source_for("GOOGL"))
+        assert len(h.periods) == 5           # NI÷EPS fallback saves FY2021
+        assert h.periods[0].income["shares_basic_wa"].source == "derived"
+        assert h.periods[-1].income["shares_basic_wa"].source == "tag"
+        assert any(w.code == "share_count_derived" for w in h.warnings)
+        # cover count comes from the undimensioned us-gaap fallback, not dei
+        assert h.shares_current.tag == "us-gaap:CommonStockSharesOutstanding"
+        assert 10e9 < h.shares_current.value < 15e9
+        assert h.validation.overall in ("pass", "pass_with_warnings")
+
+    def test_magnitudes_sane(self):
+        h = build_financial_history("GOOGL", source_for("GOOGL"))
+        assert h.periods[-1].value("revenue") > 250 * B
+
+
+class TestMCD:
+    """Costs-by-nature filer with negative equity: no COGS concept exists —
+    cost_structure must say so explicitly (owner decision, item 4)."""
+
+    def test_builds_as_by_nature(self):
+        h = build_financial_history("MCD", source_for("MCD"))
+        assert h.cost_structure == "by_nature"
+        latest = h.periods[-1]
+        assert "cost_of_revenue" not in latest.income     # absent, never zero
+        assert "gross_profit" not in latest.income
+        assert h.validation.result("PL3").status == "skipped"
+        assert h.validation.overall in ("pass", "pass_with_warnings")
+
+    def test_negative_equity_ties(self):
+        h = build_financial_history("MCD", source_for("MCD"))
+        assert h.periods[-1].value("stockholders_equity") < 0   # buyback history
+        assert h.validation.result("H1").status == "pass"
+
+
+class TestWMT:
+    """CF reconciles a broader cash total than the BS cash line: H2 must report
+    a distinguishable definitional mismatch, not a failure and not a clean tie
+    (owner decision, item 2)."""
+
+    def test_h2_definitional_warn(self):
+        h = build_financial_history("WMT", source_for("WMT"))
+        h2 = h.validation.result("H2")
+        assert h2.status == "warn"
+        assert "DEFINITIONAL" in h2.detail
+        assert h.validation.overall == "pass_with_warnings"
+
+    def test_magnitudes_sane(self):
+        h = build_financial_history("WMT", source_for("WMT"))
+        assert h.periods[-1].value("revenue") > 600 * B
+        assert h.periods[-1].end.month == 1               # Jan FYE
+
+
+class TestGE:
+    """KNOWN LIMITATION, pinned deliberately: GE's FY2022 cash flow (the GE
+    HealthCare spin) presents continuing-operations flows against cash totals
+    that include discontinued operations — a presentation the H2 alternates
+    don't yet reconcile. The COGS-optional policy fixed GE's original blocker;
+    this documents the next one honestly instead of papering over it.
+    Candidate future fix: discontinued-operations flow composites (needs owner
+    approval — it's a new schema policy, not an approved chain add)."""
+
+    def test_fails_h2_on_discontinued_ops_flows_for_now(self):
+        from ingest.errors import ValidationFailedError
+        with pytest.raises(ValidationFailedError) as exc:
+            build_financial_history("GE", source_for("GE"))
+        h2 = exc.value.report.result("H2")
+        assert h2.status == "fail"
+        assert 2022 in h2.per_period      # the spin year is the break
+
+
 class TestJPM:
     """A bank must be rejected with a clear message, never crash (spec 01 §2)."""
 

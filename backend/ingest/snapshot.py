@@ -66,7 +66,8 @@ def main(tickers: list[str]) -> None:
     size = _write_gz(FIXTURES_DIR / "company_tickers.json.gz", tickers_payload)
     print(f"company_tickers.json.gz  {size/1024:,.0f} KB")
 
-    manifest = {}
+    manifest_path = FIXTURES_DIR / "manifest.json"
+    manifest = json.loads(manifest_path.read_text()) if manifest_path.exists() else {}
     for ticker in tickers:
         ticker = ticker.upper()
         cik = client.resolve_cik(ticker)
@@ -84,7 +85,7 @@ def main(tickers: list[str]) -> None:
         print(f"{ticker:<5} CIK {cik:>10}  submissions {s1/1024:>5,.0f} KB  "
               f"companyfacts {s2/1024:>7,.0f} KB")
 
-    (FIXTURES_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(f"manifest.json            {len(manifest)} tickers")
 
 
