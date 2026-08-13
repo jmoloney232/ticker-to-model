@@ -1,0 +1,262 @@
+# Valuation methodology — single source of truth for every financial convention.
+#
+# Rendered in three places (one source, no drift):
+#   1. the website's /methodology page (spec 06)
+#   2. the workbook's Methodology sheet (spec 05)
+#   3. referenced throughout specs/04-engine.md
+#
+# Every entry: what we do (default), where the number comes from (derivation),
+# whether the user can change it (editable), and the honest tradeoff (tradeoff).
+# The app never silently picks a contested convention — it picks a documented one.
+
+meta:
+  version: 0.1.0
+  stance: >
+    Defaults are derived from the company's own reported history wherever possible,
+    are conservative where conventions are contested, and are always user-overridable.
+
+conventions:
+
+  # ── Free cash flow ─────────────────────────────────────────────────────────
+  - id: fcf_definition
+    label: Free cash flow definition
+    category: fcf
+    default: "Unlevered FCF = EBIT×(1−tax) + D&A [+ SBC if toggled] − capex − ΔNWC"
+    derivation: "All components from the projected statements; NWC excludes cash, ST investments, and all debt"
+    editable: false
+    tradeoff: "Unlevered (pre-financing) FCF pairs with WACC; levered DCF is out of scope v1."
+
+  - id: sbc_treatment
+    label: Stock-based compensation in FCF
+    category: fcf
+    default: "Expensed — NOT added back (toggle available)"
+    derivation: "SBC projected as % of revenue (3y average); toggle re-adds it as non-cash"
+    editable: true
+    tradeoff: >
+      Street practice adds SBC back (higher FCF); treating it as a real expense
+      (Damodaran) is conservative and honest about dilution. Owner-confirmed default.
+      Expect values to read low vs. typical street DCFs for heavy-SBC issuers.
+
+  # ── Discounting ────────────────────────────────────────────────────────────
+  - id: midyear_convention
+    label: Mid-year discounting
+    category: discounting
+    default: "On (toggle available)"
+    derivation: "Explicit FCF discounted at period midpoints; see terminal_value entries for the TV treatment"
+    editable: true
+    tradeoff: >
+      Off matches textbooks; on matches practitioner models (cash arrives through the
+      year, not on Dec 31). Worth ~2–4% of value. The TV treatment is deliberately
+      asymmetric: Gordon TV shifts with mid-year (perpetual flows), exit-multiple TV
+      does not (a sale is a year-end point event). Unit-tested.
+
+  - id: valuation_date
+    label: Valuation date & stub period
+    category: discounting
+    default: "Today, stamped as a literal input (never TODAY() in the workbook)"
+    derivation: "Discount exponent = (period midpoint − ValuationDate)/365.25 (mid-year on) or (FYE − ValuationDate)/365.25 (off); exit-multiple TV always uses FYE_N"
+    editable: true
+    tradeoff: "Discounting from the last fiscal year end silently ignores the elapsed stub; day-count exponents handle mid-year valuation dates correctly and reproduce textbook results when ValuationDate = FYE."
+
+  # ── Cost of capital ────────────────────────────────────────────────────────
+  - id: risk_free_rate
+    label: Risk-free rate
+    category: wacc
+    default: "Spot 10Y Treasury (FRED DGS10)"
+    derivation: "Latest DGS10 observation, percent→decimal; staleness labeled when cached"
+    editable: true
+    tradeoff: "Spot is observable and current but embeds today's rate regime in a perpetual-horizon model; a normalized-rate override is supported. 10Y maturity is a documented compromise vs. the perpetual horizon."
+
+  - id: equity_risk_premium
+    label: Equity risk premium
+    category: wacc
+    default: "5.0%"
+    derivation: "Fixed default; no observable 'true' value exists"
+    editable: true
+    tradeoff: "4.5–6.0% are all defensible (Damodaran implied ~4.5–5.5%; long-run historical ~6%+). 5.0% sits mid-range."
+
+  - id: beta
+    label: Beta
+    category: wacc
+    default: "2y weekly OLS vs SPY, Blume-adjusted (β_adj = ⅔β + ⅓); toggle for raw; manual override"
+    derivation: "Computed in-house from split-adjusted bars (spec 03); ≥80 paired weekly observations required, else β=1.0 fallback with a loud warning"
+    editable: true
+    tradeoff: >
+      Weekly avoids the non-synchronous-trading bias that pulls daily betas toward
+      zero; 2y keeps recency (Bloomberg default; Damodaran uses 5y monthly). Blume
+      adjustment anticipates mean reversion. Disclosed limitation: a regression beta
+      embeds current leverage — projections that change capital structure make it
+      silently inconsistent (unlever/relever is a v2 extension).
+
+  - id: cost_of_debt
+    label: Cost of debt
+    category: wacc
+    default: "Synthetic rating: 3y avg interest coverage (EBIT÷interest) → rating → default spread → Kd = rf + spread; toggle: embedded rate (interest ÷ avg gross book debt)"
+    derivation: "Spread table below (adapted from Damodaran's synthetic-rating tables; placeholder values — verify against the current published table at build time)"
+    editable: true
+    tradeoff: >
+      The embedded coupon measures legacy debt, not marginal refi cost — 3% notes from
+      2021 against a 7% refi environment make financing look far cheaper than it is.
+      Synthetic rating estimates the marginal rate with no new data. After-taxed at the
+      SAME marginal rate as terminal NOPAT (mismatch is a classic silent bug; asserted).
+    spread_table:
+      - {coverage_above: 12.5, rating: "AAA/AA", spread: 0.0070}
+      - {coverage_above: 9.5,  rating: "A+",     spread: 0.0090}
+      - {coverage_above: 7.5,  rating: "A",      spread: 0.0105}
+      - {coverage_above: 6.0,  rating: "A-",     spread: 0.0120}
+      - {coverage_above: 4.5,  rating: "BBB+",   spread: 0.0150}
+      - {coverage_above: 3.5,  rating: "BBB",    spread: 0.0180}
+      - {coverage_above: 3.0,  rating: "BB+",    spread: 0.0250}
+      - {coverage_above: 0.0,  rating: "BB and below", spread: 0.0400}
+
+  - id: wacc_weights
+    label: WACC weights
+    category: wacc
+    default: "Equity at market cap (price × current-diluted share proxy); debt at GROSS book value"
+    derivation: "Gross debt = short-term + long-term debt incl. finance leases; market value of debt unobservable without bond data — book is the standard proxy for investment-grade names"
+    editable: false
+    tradeoff: >
+      Gross debt in the WACC weights; NET debt appears only in the EV→equity bridge.
+      Using net in both is the single most common WACC error — this placement is a
+      tested engine invariant (P3), not a convention users can break.
+
+  - id: tax_rate
+    label: Tax rate policy
+    category: wacc
+    default: "Explicit years: 3y effective rate (clamped 10–35%) fading linearly to marginal statutory 25% by the terminal year; terminal NOPAT and after-tax Kd both use marginal"
+    derivation: "Effective = income tax ÷ pretax income, 3y average; marginal default 25% (21% federal + state blend), editable"
+    editable: true
+    tradeoff: "Effective reflects what the company actually pays near-term; marginal is right for the perpetual horizon and the debt tax shield. NOLs and deferred-tax modeling are out of scope v1 (disclosed)."
+
+  # ── Terminal value ─────────────────────────────────────────────────────────
+  - id: terminal_growth
+    label: Terminal growth rate
+    category: terminal_value
+    default: "max(1.5%, min(2.5%, 10Y yield))"
+    derivation: "Anchored to nominal GDP logic (rf ≈ inflation + real growth), floored at 1.5%"
+    editable: true
+    tradeoff: >
+      The unfloored Damodaran rule (g ≤ rf) breaks under distorted rates — in 2020 it
+      would have forced g ≈ 0.7% and cut every valuation 20–30% for reasons unrelated
+      to the business. The floor caps that distortion. Overrides above min(2.5%, 10Y)
+      draw a soft warning; g ≥ WACC is hard-blocked.
+
+  - id: terminal_reinvestment
+    label: Terminal reinvestment consistency
+    category: terminal_value
+    default: "Reinvestment rate = g ÷ ROIC_t; TV = NOPAT_{N+1} × (1 − g/ROIC_t) ÷ (WACC − g)"
+    derivation: "ROIC_t default = trailing 3y NOPAT ÷ invested capital (gross debt + total equity − cash − ST investments); editable"
+    editable: true
+    tradeoff: >
+      Growing year-N FCF at g forever implicitly assumes infinite marginal ROIC —
+      quietly inflating TV exactly where TV is 75%+ of value. Tying reinvestment to
+      g/ROIC makes terminal growth cost what it should. Requires g/ROIC_t < 1 (hard).
+
+  - id: exit_multiple
+    label: Exit multiple terminal value
+    category: terminal_value
+    default: "Company's own current EV/EBITDA × terminal-year EBITDA (comps out of scope v1)"
+    derivation: "Current EV = market cap + gross debt − cash − ST investments; trailing EBITDA = EBIT + D&A"
+    editable: true
+    tradeoff: >
+      Using the company's own multiple assumes today's pricing persists — circular-ish
+      and labeled as such. Mitigated by the implied cross-check (below), which is the
+      standard practitioner discipline and recovers most of the value of comps with no
+      new data.
+
+  - id: implied_crosscheck
+    label: Implied g ↔ implied multiple cross-check
+    category: terminal_value
+    default: "Always displayed, both directions"
+    derivation: "implied_exit_multiple = TV_gordon ÷ EBITDA_N; implied_g = WACC − FCF_terminal ÷ TV_exit (labeled approximation: holds the Gordon leg's reinvestment fixed)"
+    editable: false
+    tradeoff: "Shows 'your 12.0× exit implies g = 3.1%' and 'your 2.5% g implies 9.4×' — makes inconsistent terminal assumptions visible instead of disclaimed. Same closed forms in engine and workbook (parity)."
+
+  # ── EV → equity bridge ─────────────────────────────────────────────────────
+  - id: excess_cash
+    label: Excess cash definition
+    category: bridge
+    default: "Cash + ST investments above an operating floor of 2% of revenue"
+    derivation: "Floor % editable; cash below the floor is operating and stays out of the bridge"
+    editable: true
+    tradeoff: "Treating ALL cash as excess materially flatters cash-rich names; 2% of revenue is a common operating-cash heuristic (disclosed as a heuristic)."
+
+  - id: ev_bridge
+    label: EV → equity bridge
+    category: bridge
+    default: "EV + excess cash + LT investments − gross debt − NCI (book) − preferred − unfunded pension (after-tax at marginal)"
+    derivation: "Each component from the canonical schema; missing optional items are logged, never silent zeros"
+    editable: false
+    tradeoff: "NCI at book is a disclosed proxy (fair value needs segment multiples — out of scope). Pension after-tax reflects deductibility of contributions."
+
+  - id: share_count
+    label: Share count for value per share
+    category: bridge
+    default: "Current cover-page basic shares × latest-FY (diluted WA ÷ basic WA) ratio"
+    derivation: "dei:EntityCommonStockSharesOutstanding × dilution factor from the latest income statement"
+    editable: true
+    tradeoff: >
+      Equity value per share is a point-in-time measure: it needs TODAY'S diluted
+      count, not a weighted average over a finished period (WA systematically
+      understates the denominator for steady issuers). Full treasury-stock-method
+      dilution needs option/RSU footnote data — out of scope v1 — so the latest
+      observed dilution ratio applied to current basic shares is the proxy. Owner-reviewed.
+
+  - id: operating_leases
+    label: Operating leases
+    category: bridge
+    default: "Excluded from net debt; liability tracked and disclosed"
+    derivation: "Post-ASC 842 operating lease liabilities from the schema; finance leases ARE in debt"
+    editable: false
+    tradeoff: >
+      Including operating leases in debt requires lease-adjusting EBITDA too; v1 keeps
+      both sides consistent by excluding them. Magnitude trigger: lease liability >
+      25% of gross debt surfaces a warning (retail/restaurant/airline names) — the
+      two treatments genuinely diverge there and a footnote isn't sufficient.
+
+  # ── Projections ────────────────────────────────────────────────────────────
+  - id: assumption_defaults
+    label: Assumption default derivations
+    category: projections
+    default: "Every default derived from the company's own reported history; every one editable"
+    derivation: >
+      Revenue growth: 3y CAGR faded linearly to terminal g by FY5. Margins & opex
+      ratios: 3y averages. DSO/DIO/DPO: 3y averages of 365·AR/rev, 365·inv/COGS,
+      365·AP/COGS. Capex: % revenue (3y avg). D&A: % of beginning net PP&E (3y avg;
+      falls back to % revenue if PP&E unmapped). Payout ratio: 3y avg, clamped [0,1].
+      Interest income yield: 3y avg effective yield on cash, clamped [0, rf].
+    editable: true
+    tradeoff: "History-derived defaults are traceable and defensible but assume continuity; the fade to terminal g imposes maturity. Every derivation string is shown next to its input in the UI and workbook."
+
+  - id: projection_mechanics
+    label: Projection mechanics
+    category: projections
+    default: "Cash is the balance-sheet plug (no revolver); interest on BEGINNING-of-period balances; debt constant; dividends at payout ratio; no buybacks; shares constant"
+    derivation: "Beginning-balance interest eliminates circularity — the exported workbook never needs iterative calculation (hard requirement)"
+    editable: false
+    tradeoff: "A revolver is unnecessary for cash-generative large caps in scope; a deeply negative cash plug raises a warning instead of fabricating financing. P&L interest uses the embedded legacy-debt rate; WACC uses the marginal (synthetic) rate — different questions, both documented."
+
+  # ── Data policies ──────────────────────────────────────────────────────────
+  - id: restatement_policy
+    label: Restatement policy
+    category: data
+    default: "Latest-filed accession wins (as-restated history)"
+    derivation: "Per (concept, period): max filed date across accessions; >1% delta vs first-filed → visible warning"
+    editable: false
+    tradeoff: "As-restated is the right basis for forecasting; as-originally-reported preserves point-in-time knowledge (useful for backtesting — out of scope). Restatements surface as warnings, never silently."
+
+  - id: fiscal_calendar
+    label: Fiscal calendars & 53-week years
+    category: data
+    default: "Annual periods anchored to the filer's FYE; 53-week years detected (≥371 days) and annotated, not normalized"
+    derivation: "A 53rd week inflates apparent growth ~1.9%; the annotation keeps growth comparisons honest"
+    editable: false
+    tradeoff: "Normalizing to 52 weeks would touch every line item for a ~2% effect; v1 discloses instead."
+
+  - id: market_data
+    label: Market data policies
+    category: data
+    default: "Split-adjusted bars only; SPY as market benchmark; degradation ladder live → cache → snapshot, always labeled"
+    derivation: "Raw bars turn a split into a fake return that destroys the beta regression; staleness is shown wherever cached data is used"
+    editable: false
+    tradeoff: "SPY (investable, dividend-inclusive via total-return approximation limits disclosed) vs. the index itself: immaterial for beta at this scope."

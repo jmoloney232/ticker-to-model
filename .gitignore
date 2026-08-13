@@ -1,0 +1,30 @@
+# Secrets — never commit API keys
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Runtime caches (SQLite cache is disposable; committed snapshots live in backend/tests/fixtures/)
+*.sqlite
+*.sqlite3
+*.db
+
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+
+# Generated workbooks (except any committed golden fixtures)
+*.xlsx
+!backend/tests/fixtures/**/*.xlsx

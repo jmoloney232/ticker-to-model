@@ -1,0 +1,663 @@
+# Canonical financial-statement schema — machine-readable source of truth.
+# Human-readable mirror with rationale: specs/02-schema.md (the two must not drift).
+#
+# Each item: canonical name, statement, XBRL fact shape, ordered fallback tag chain
+# (first tag with a fact for the period wins), required flag, and behavior when
+# unmappable. Tags are us-gaap namespace unless prefixed otherwise (dei:).
+#
+# STATUS: proposal (phase 0). Chains are built from common large-cap filing practice
+# and must be verified empirically against the five fixture companyfacts payloads in
+# phase 1 — expect to add tags, never to remove the no-silent-zero rules.
+
+meta:
+  version: 0.1.0
+  policies:
+    restatement: latest_filed_wins        # spec 01 §4; >1% delta => warning H6
+    missing_required: error               # MissingRequiredItemError — model refuses to build
+    missing_optional: per_item_rule       # see missing_rule on each item
+  missing_rules:
+    zero_logged: "Treat as 0 and emit an unmapped_item warning listing tags tried"
+    derive: "Compute from the item's derive expression; provenance = 'derived'"
+    omit: "Leave absent; dependent checks report 'skipped', never 'pass'"
+  sign_conventions:
+    payments: "EDGAR reports Payments* tags as positive outflows; keep positive, orientation applied in engine"
+    increase_decrease: "IncreaseDecrease* tags follow taxonomy sign definitions; normalize at mapping time, test per tag"
+
+items:
+  # ── Income statement (duration) ────────────────────────────────────────────
+  - name: revenue
+    label: Revenue
+    statement: income
+    shape: duration
+    required: true
+    tags:
+      - RevenueFromContractWithCustomerExcludingAssessedTax
+      - Revenues
+      - SalesRevenueNet
+      - RevenueFromContractWithCustomerIncludingAssessedTax
+    notes: "Post-ASC 606 filers use the first tag; Revenues/SalesRevenueNet cover older years in the history window."
+
+  - name: cost_of_revenue
+    label: Cost of revenue
+    statement: income
+    shape: duration
+    required: true
+    tags:
+      - CostOfRevenue
+      - CostOfGoodsAndServicesSold
+      - CostOfGoodsSold
+    notes: "CostOfGoodsSold deprecated in later taxonomies but present in older filed years."
+
+  - name: gross_profit
+    label: Gross profit
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: derive
+    derive: "revenue - cost_of_revenue"
+    tags: [GrossProfit]
+    cross_check: "reported GrossProfit vs revenue - cost_of_revenue (H5)"
+
+  - name: research_and_development
+    label: R&D expense
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags: [ResearchAndDevelopmentExpense]
+
+  - name: selling_general_admin
+    label: SG&A expense
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: derive
+    tags: [SellingGeneralAndAdministrativeExpense]
+    derive: "sum(SellingAndMarketingExpense, GeneralAndAdministrativeExpense)"
+    notes: "Some filers split selling from G&A; composite fallback sums the pieces."
+
+  - name: other_operating
+    label: Other operating items
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: derive
+    tags: [OtherOperatingIncomeExpenseNet]
+    derive: "residual: operating_income - (gross_profit - research_and_development - selling_general_admin)"
+    notes: "Residual bucket so the mapped IS reconciles to reported operating income exactly."
+
+  - name: operating_income
+    label: Operating income (EBIT)
+    statement: income
+    shape: duration
+    required: true
+    tags: [OperatingIncomeLoss]
+    cross_check: "vs gross_profit - opex items (H5)"
+
+  - name: interest_expense
+    label: Interest expense
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - InterestExpense
+      - InterestExpenseNonoperating
+      - InterestAndDebtExpense
+      - InterestExpenseDebt
+    notes: "Feeds embedded cost of debt and synthetic-rating coverage; zero => coverage treated as 'no debt cost', warned. InterestExpenseNonoperating: MSFT FY2023+ (verified against fixtures)."
+
+  - name: interest_income
+    label: Interest income
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - InvestmentIncomeInterest
+      - InvestmentIncomeInterestAndDividend
+
+  - name: other_nonoperating
+    label: Other non-operating income (expense)
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: derive
+    tags:
+      - NonoperatingIncomeExpense
+      - OtherNonoperatingIncomeExpense
+    derive: "residual: pretax_income - operating_income + interest_expense - interest_income"
+    notes: "NonoperatingIncomeExpense sometimes nets interest items — residual definition keeps the IS tie exact; cross-check when both mapped."
+
+  - name: pretax_income
+    label: Pre-tax income
+    statement: income
+    shape: duration
+    required: true
+    tags:
+      - IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest
+      - IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments
+
+  - name: income_tax
+    label: Income tax expense
+    statement: income
+    shape: duration
+    required: true
+    tags: [IncomeTaxExpenseBenefit]
+
+  - name: net_income
+    label: Net income (to parent)
+    statement: income
+    shape: duration
+    required: true
+    tags:
+      - NetIncomeLoss
+      - ProfitLoss
+    notes: "ProfitLoss includes noncontrolling interests — when it is the source, subtract nci_income (H3 checks consistency)."
+
+  - name: nci_income
+    label: Net income to noncontrolling interests
+    statement: income
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags: [NetIncomeLossAttributableToNoncontrollingInterest]
+
+  - name: eps_basic
+    label: EPS, basic
+    statement: income
+    shape: duration
+    unit: USD/shares
+    required: false
+    missing_rule: omit
+    tags: [EarningsPerShareBasic]
+
+  - name: eps_diluted
+    label: EPS, diluted
+    statement: income
+    shape: duration
+    unit: USD/shares
+    required: false
+    missing_rule: omit
+    tags: [EarningsPerShareDiluted]
+
+  - name: shares_basic_wa
+    label: Weighted-average shares, basic
+    statement: income
+    shape: duration
+    unit: shares
+    required: true
+    tags: [WeightedAverageNumberOfSharesOutstandingBasic]
+
+  - name: shares_diluted_wa
+    label: Weighted-average shares, diluted
+    statement: income
+    shape: duration
+    unit: shares
+    required: false
+    missing_rule: derive
+    derive: "shares_basic_wa (no dilution reported)"
+    tags: [WeightedAverageNumberOfDilutedSharesOutstanding]
+    notes: "Diluted/basic ratio feeds the current-diluted share proxy (methodology: share_count)."
+
+  # ── Balance sheet (instant) ────────────────────────────────────────────────
+  - name: cash_and_equivalents
+    label: Cash & equivalents
+    statement: balance
+    shape: instant
+    required: true
+    tags:
+      - CashAndCashEquivalentsAtCarryingValue
+      - CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+    notes: "Second tag includes restricted cash (post-ASU 2016-18). H2 must compare against the Δ tag matching whichever chain entry won — chain-consistency rule, spec 07."
+
+  - name: short_term_investments
+    label: Short-term investments
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - ShortTermInvestments
+      - OtherShortTermInvestments
+      - MarketableSecuritiesCurrent
+      - AvailableForSaleSecuritiesDebtSecuritiesCurrent
+    notes: "OtherShortTermInvestments: KO's current tag (verified against fixtures)."
+
+  - name: accounts_receivable
+    label: Accounts receivable, net
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - AccountsReceivableNetCurrent
+      - ReceivablesNetCurrent
+    notes: "Drives DSO; zero_logged => DSO default degrades to 0 with a warning, not a crash."
+
+  - name: inventory
+    label: Inventory, net
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags: [InventoryNet]
+
+  - name: other_current_assets
+    label: Other current assets
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [OtherAssetsCurrent]
+    derive: "residual: total_current_assets - (cash + ST investments + AR + inventory)"
+
+  - name: total_current_assets
+    label: Total current assets
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [AssetsCurrent]
+    derive: "sum of mapped current asset items (unclassified balance sheet — warn)"
+
+  - name: ppe_net
+    label: Property, plant & equipment, net
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - PropertyPlantAndEquipmentNet
+      - PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization
+    notes: "If zero/unmapped, the engine's D&A default falls back from %-of-PP&E to %-of-revenue (documented in methodology)."
+
+  - name: goodwill
+    label: Goodwill
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags: [Goodwill]
+
+  - name: intangibles
+    label: Intangible assets, net (excl. goodwill)
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - IntangibleAssetsNetExcludingGoodwill
+      - FiniteLivedIntangibleAssetsNet
+
+  - name: long_term_investments
+    label: Long-term investments
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - LongTermInvestments
+      - MarketableSecuritiesNoncurrent
+    notes: "Added to the EV→equity bridge at book as non-operating (labeled)."
+
+  - name: operating_lease_rou
+    label: Operating lease right-of-use asset
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags: [OperatingLeaseRightOfUseAsset]
+
+  - name: other_noncurrent_assets
+    label: Other non-current assets
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [OtherAssetsNoncurrent]
+    derive: "residual: total_assets - total_current_assets - (PP&E + goodwill + intangibles + LT investments + ROU asset)"
+
+  - name: total_assets
+    label: Total assets
+    statement: balance
+    shape: instant
+    required: true
+    tags: [Assets]
+
+  - name: accounts_payable
+    label: Accounts payable
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - AccountsPayableCurrent
+      - AccountsPayableTradeCurrent
+      - AccountsPayableAndAccruedLiabilitiesCurrent
+    notes: "AccountsPayableTradeCurrent: KHC's tag (verified against fixtures). When the combined AP+accrued tag wins, accrued_liabilities is forced to 0 with a warning to avoid double-counting (DPO then overstates — warned)."
+
+  - name: accrued_liabilities
+    label: Accrued liabilities
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags: [AccruedLiabilitiesCurrent]
+
+  - name: short_term_debt
+    label: Short-term debt (incl. current LTD & finance leases)
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [DebtCurrent]
+    derive: "sum(ShortTermBorrowings, CommercialPaper, first_of(LongTermDebtCurrent + FinanceLeaseLiabilityCurrent, LongTermDebtAndCapitalLeaseObligationsCurrent))"
+    notes: "Finance leases are debt under GAAP and included; operating leases are NOT (see operating_lease_liability). The AndCapitalLeaseObligations variant already contains leases — never summed with the plain variant (double count)."
+
+  - name: deferred_revenue_current
+    label: Deferred revenue, current
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - ContractWithCustomerLiabilityCurrent
+      - DeferredRevenueCurrent
+
+  - name: other_current_liabilities
+    label: Other current liabilities
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [OtherLiabilitiesCurrent]
+    derive: "residual: total_current_liabilities - (AP + accrued + ST debt + deferred revenue current)"
+
+  - name: total_current_liabilities
+    label: Total current liabilities
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [LiabilitiesCurrent]
+    derive: "sum of mapped current liability items (unclassified balance sheet — warn)"
+
+  - name: long_term_debt
+    label: Long-term debt (incl. noncurrent finance leases)
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - LongTermDebtNoncurrent
+      - LongTermDebtAndCapitalLeaseObligations
+    derive: "fallback: LongTermDebt - short_term_debt portion when only the total is tagged; plus FinanceLeaseLiabilityNoncurrent when tagged"
+    notes: >
+      Gross debt = short_term_debt + long_term_debt; used in WACC weights (gross) —
+      net debt only in the bridge (P3). LongTermDebtAndCapitalLeaseObligations
+      (KHC, KO — verified against fixtures) already includes finance leases, so the
+      FinanceLeaseLiabilityNoncurrent add-on applies only to the plain
+      LongTermDebtNoncurrent winner.
+
+  - name: operating_lease_liability
+    label: Operating lease liabilities (current + noncurrent)
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags: [OperatingLeaseLiability]
+    derive: "sum(OperatingLeaseLiabilityCurrent, OperatingLeaseLiabilityNoncurrent) preferred over the combined tag"
+    notes: "Excluded from debt (EBITDA is unadjusted — consistency). Drives the lease_heavy warning at >25% of gross debt (P6)."
+
+  - name: deferred_tax_liabilities
+    label: Deferred tax liabilities
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - DeferredIncomeTaxLiabilitiesNet
+      - DeferredTaxLiabilities
+
+  - name: pension_liability
+    label: Unfunded pension & postretirement liability
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent
+      - DefinedBenefitPensionPlanLiabilitiesNoncurrent
+    notes: "Enters the EV→equity bridge after-tax at the marginal rate (methodology: ev_bridge)."
+
+  - name: other_noncurrent_liabilities
+    label: Other non-current liabilities
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [OtherLiabilitiesNoncurrent]
+    derive: "residual: total_liabilities - total_current_liabilities - (LTD + op lease liab + DTL + pension)"
+
+  - name: total_liabilities
+    label: Total liabilities
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [Liabilities]
+    derive: "total_liabilities_and_equity - stockholders_equity - nci - preferred (warn when derived)"
+    cross_check: "reported vs derived (H5)"
+
+  - name: preferred_equity
+    label: Preferred equity
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags: [PreferredStockValue]
+    notes: "Usually a component of stockholders_equity (par value) — the bridge subtracts it from equity value; H1 must not double-count it."
+
+  - name: temporary_equity
+    label: Temporary equity (redeemable NCI etc.)
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - TemporaryEquityCarryingAmountAttributableToParent
+      - RedeemableNoncontrollingInterestEquityCarryingAmount
+    notes: "Mezzanine section between liabilities and equity; without it H1 falsely fails on filers with redeemable NCI."
+
+  - name: stockholders_equity
+    label: Stockholders' equity (parent)
+    statement: balance
+    shape: instant
+    required: true
+    tags:
+      - StockholdersEquity
+      - StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest
+    notes: "When the including-NCI tag wins, subtract noncontrolling_interest."
+
+  - name: noncontrolling_interest
+    label: Noncontrolling interest
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: zero_logged
+    tags: [MinorityInterest]
+    notes: "Book value; subtracted in the EV→equity bridge (disclosed proxy for fair value)."
+
+  - name: retained_earnings
+    label: Retained earnings (accumulated deficit)
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: omit
+    tags: [RetainedEarningsAccumulatedDeficit]
+    notes: "Only used by the H4 roll-forward soft check; omit => H4 reports 'skipped'."
+
+  - name: total_liabilities_and_equity
+    label: Total liabilities & equity
+    statement: balance
+    shape: instant
+    required: false
+    missing_rule: derive
+    tags: [LiabilitiesAndStockholdersEquity]
+    derive: "total_liabilities + stockholders_equity + nci + temporary_equity (preferred is inside equity — not added separately)"
+
+  - name: shares_outstanding
+    label: Common shares outstanding (cover page)
+    statement: balance
+    shape: instant
+    unit: shares
+    required: true
+    selection: latest
+    tags: ["dei:EntityCommonStockSharesOutstanding"]
+    notes: >
+      dei namespace, cover-page date. selection: latest — the single most recent fact
+      across ALL form types (10-Qs included) wins, because the share proxy needs
+      today's count, not the FY-end count. Basis of the current-diluted proxy:
+      shares_outstanding × (shares_diluted_wa ÷ shares_basic_wa) of the latest FY.
+
+  # ── Cash flow statement (duration) ─────────────────────────────────────────
+  - name: d_and_a
+    label: Depreciation & amortization
+    statement: cashflow
+    shape: duration
+    required: true
+    tags:
+      - DepreciationDepletionAndAmortization
+      - DepreciationAmortizationAndAccretionNet
+    derive: "fallback: sum(Depreciation, AmortizationOfIntangibleAssets)"
+
+  - name: stock_compensation
+    label: Stock-based compensation
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags: [ShareBasedCompensation]
+    notes: "Feeds the SBC toggle (methodology: sbc_treatment) — default is expensed, no add-back."
+
+  - name: deferred_taxes_cf
+    label: Deferred income taxes (non-cash)
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - DeferredIncomeTaxExpenseBenefit
+      - DeferredIncomeTaxesAndTaxCredits
+
+  - name: working_capital_change
+    label: Change in operating working capital
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: derive
+    tags: [IncreaseDecreaseInOperatingCapital]
+    derive: "residual: cash_from_operations - net_income - d_and_a - stock_compensation - deferred_taxes_cf"
+    notes: "Sign normalized at mapping time per meta.sign_conventions; per-tag sign tests required."
+
+  - name: cash_from_operations
+    label: Cash from operations
+    statement: cashflow
+    shape: duration
+    required: true
+    tags:
+      - NetCashProvidedByUsedInOperatingActivities
+      - NetCashProvidedByUsedInOperatingActivitiesContinuingOperations
+
+  - name: capex
+    label: Capital expenditures
+    statement: cashflow
+    shape: duration
+    required: true
+    tags:
+      - PaymentsToAcquirePropertyPlantAndEquipment
+      - PaymentsToAcquireProductiveAssets
+    notes: "Positive outflow per sign_conventions."
+
+  - name: acquisitions
+    label: Acquisitions, net of cash
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags: [PaymentsToAcquireBusinessesNetOfCashAcquired]
+
+  - name: cash_from_investing
+    label: Cash from investing
+    statement: cashflow
+    shape: duration
+    required: true
+    tags:
+      - NetCashProvidedByUsedInInvestingActivities
+      - NetCashProvidedByUsedInInvestingActivitiesContinuingOperations
+
+  - name: dividends_paid
+    label: Dividends paid
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - PaymentsOfDividends
+      - PaymentsOfDividendsCommonStock
+
+  - name: buybacks
+    label: Share repurchases
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags: [PaymentsForRepurchaseOfCommonStock]
+
+  - name: debt_issued
+    label: Debt issued
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags: [ProceedsFromIssuanceOfLongTermDebt]
+
+  - name: debt_repaid
+    label: Debt repaid
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags: [RepaymentsOfLongTermDebt]
+
+  - name: cash_from_financing
+    label: Cash from financing
+    statement: cashflow
+    shape: duration
+    required: true
+    tags:
+      - NetCashProvidedByUsedInFinancingActivities
+      - NetCashProvidedByUsedInFinancingActivitiesContinuingOperations
+
+  - name: fx_effect
+    label: FX effect on cash
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: zero_logged
+    tags:
+      - EffectOfExchangeRateOnCashAndCashEquivalents
+      - EffectOfExchangeRateOnCashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents
+
+  - name: net_change_in_cash
+    label: Net change in cash
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: derive
+    tags:
+      - CashAndCashEquivalentsPeriodIncreaseDecrease
+      - CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect
+    derive: "cash_from_operations + cash_from_investing + cash_from_financing + fx_effect"
+    notes: "H2 compares against the Δ of the balance-sheet cash item — using the SAME restricted-cash definition as the cash chain entry that won."
