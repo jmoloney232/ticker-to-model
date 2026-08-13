@@ -1,0 +1,112 @@
+"""Output data shapes for ingest (specs/01-ingest.md, Outputs).
+
+Plain dataclasses on purpose: the engine consumes these and must stay free of
+framework imports (CLAUDE.md, engine purity).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Literal
+
+Severity = Literal["fail", "warn", "info"]
+CheckStatus = Literal["pass", "fail", "warn", "skipped"]
+SourceKind = Literal["tag", "derived", "zero_logged"]
+Tier = Literal["live", "cache", "stale_cache", "snapshot"]
+
+
+@dataclass(frozen=True)
+class Fact:
+    """One selected value with full provenance (invariant: every number has it)."""
+
+    value: float
+    unit: str
+    tag: str                      # winning tag ("us-gaap:X" / "dei:X") or "derived"
+    source: SourceKind
+    accession: str | None = None
+    filed: date | None = None
+    end: date | None = None
+    first_filed_value: float | None = None
+    was_restated: bool = False
+    restatement_delta_pct: float | None = None
+
+
+@dataclass
+class FiscalPeriod:
+    fiscal_year: int              # labeled by calendar year nearest the FYE
+    start: date
+    end: date
+    duration_days: int
+    is_53_week: bool
+    income: dict[str, Fact] = field(default_factory=dict)
+    balance: dict[str, Fact] = field(default_factory=dict)
+    cashflow: dict[str, Fact] = field(default_factory=dict)
+
+    def get(self, item: str) -> Fact | None:
+        return self.income.get(item) or self.balance.get(item) or self.cashflow.get(item)
+
+    def value(self, item: str, default: float | None = None) -> float | None:
+        f = self.get(item)
+        return f.value if f is not None else default
+
+
+@dataclass
+class CompanyMeta:
+    cik: int
+    ticker: str
+    name: str
+    sic: int | None
+    sic_description: str
+    fye_anchor: str               # MMDD from submissions, e.g. "0630"
+    currency: str = "USD"
+
+
+@dataclass
+class IngestWarning:
+    code: str                     # unmapped_item | restated | week53 | ...
+    message: str
+    fiscal_year: int | None = None
+    item: str | None = None
+    detail: dict = field(default_factory=dict)
+
+
+@dataclass
+class CheckResult:
+    check_id: str                 # H1..H7
+    severity: Severity
+    status: CheckStatus
+    magnitude: float | None = None    # worst offending residual across periods
+    tolerance: float | None = None
+    detail: str = ""
+    per_period: dict[int, float] = field(default_factory=dict)
+
+
+@dataclass
+class ValidationReport:
+    results: list[CheckResult] = field(default_factory=list)
+
+    @property
+    def overall(self) -> str:
+        if any(r.severity == "fail" and r.status == "fail" for r in self.results):
+            return "fail"
+        if any(r.status == "warn" and r.severity != "info" for r in self.results):
+            return "pass_with_warnings"
+        return "pass"
+
+    def result(self, check_id: str) -> CheckResult | None:
+        return next((r for r in self.results if r.check_id == check_id), None)
+
+
+@dataclass
+class FinancialHistory:
+    company: CompanyMeta
+    periods: list[FiscalPeriod]           # ascending fiscal_year, gapless
+    shares_current: Fact                  # latest cover-page count, any form
+    warnings: list[IngestWarning]
+    validation: ValidationReport
+    staleness: dict[str, Tier]            # per EDGAR endpoint
+
+    @property
+    def latest(self) -> FiscalPeriod:
+        return self.periods[-1]
