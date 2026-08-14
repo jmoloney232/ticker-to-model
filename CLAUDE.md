@@ -39,7 +39,7 @@ Build and verify each phase before starting the next.
 |---|---|---|
 | 0 | Specs, schema, methodology | done (owner-reviewed) |
 | 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done — 130 tests, 9 real-filing fixtures; final scan: 23/27 non-financials build, DE coverage-refused, GE spin-year isolated, XOM+NEE honestly rejected; limitations in docs/known-limitations.md** |
-| 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | **in progress — derivation rules owner-approved (incl. 30% growth cap, D&A memo placement, interest asymmetry); market module built, 21 tests (awaiting owner review); engine + CLI next** |
+| 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | **built — market module + engine + CLI; 185 tests incl. hand-computed micro-case, P1–P4 invariants + fuzz on real filers, MSFT golden (frozen), market-cap sanity band; awaiting owner review of CLI output** |
 | 3 | `backend/excel/` — formula-driven workbook | not started |
 | 4 | `backend/app/` + `frontend/` — API, dashboard, download | not started |
 
