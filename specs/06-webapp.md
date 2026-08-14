@@ -10,31 +10,61 @@ Vercel. API keys live server-side only; the browser talks exclusively to our API
 - Module outputs: `FinancialHistory`, `MarketInputs`, `ModelResult`, workbook bytes
 - `methodology.yaml`
 
-## Outputs — API
+## Outputs — API (as built, phase 4 part 1; owner status rules 2026-08-14)
+
+A mechanical translation of the CLI: derive → preset → overrides → `build_model`,
+no valuation logic in this layer. `backend/app/` = `main.py` (routes, DI),
+`serialize.py` (the JSON contract), `state.py` (the company cache).
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/health` | Liveness + degradation status per data source |
-| `GET /api/methodology` | methodology.yaml rendered as JSON (single source of truth for the /methodology page and anything else that lists conventions) |
-| `GET /api/company/{ticker}` | Full model at default assumptions (see response shape) |
-| `POST /api/company/{ticker}/model` | Body: `{overrides: {field: value}}` → recomputed model |
-| `POST /api/company/{ticker}/workbook` | Same body → `.xlsx` stream (`Content-Disposition: attachment; TICKER_model_YYYY-MM-DD.xlsx`) |
+| `GET /api/health` | Liveness |
+| `GET /api/presets` | Every preset with name/title/rationale/applicability and per-field form + rule (from presets.yaml) |
+| `GET /api/methodology` | methodology.yaml conventions + the presets — the single source for the /methodology page |
+| `POST /api/model/{ticker}` | Body `{preset?, overrides?, code?, valuation_date?}` → the full model contract below. Explicit fields win over the code (CLI rule) |
+| `GET /api/model/{ticker}?code=&preset=&valuation_date=` | Same, for share links |
+| `GET /api/reverse/{ticker}?valuation_date=` | The four reverse-DCF solves `{derived, implied, status, target_price}` — no-solution states named, never numbered |
+| `GET /api/workbook/{ticker}.xlsx?code=&preset=&valuation_date=` | The formula workbook from the SAME ModelResult the model endpoint serializes (screen == download, contract-tested via LibreOffice recalc). Refused filers → 409 |
+| `POST /api/code` / `GET /api/code/{code}` | Compact assumption-set code, both directions |
 
-Response shape (company endpoints): company meta · history summary (per-year statements
-for display) · `assumptions`: per field `{default, derivation, override, effective,
-unit, group, bounds}` · `model`: the full ModelResult · `validation`: spec 07 report ·
-`warnings` · `staleness`: per-source tier + as-of dates.
+**Model contract** (`status: "ok"`): `company` (meta + cost_structure +
+`filing_basis` from FY0 provenance) · `market` (price/rf/beta with staleness) ·
+`preset` (name/title/rationale) · `assumptions`: per field `{name, label, value,
+unit, provenance: derived|preset:<name>|user, derived_default, rule, editable}` ·
+`provenance_counts` · `valuation.gordon / .exit_multiple`: `{available: true,
+value_per_share, vs_price, enterprise_value, equity_value, tv_*, tv_share_of_ev,
+bridge[]}` **or** `{available: false, reason: {code, message, detail}}` ·
+`wacc` (full build-up) · `ufcf` · `projections` · `crosschecks` · `sensitivity`
+(grids, null cells for g ≥ WACC) · `checks` (P1–P8) · `warnings` **structured**
+`[{origin, code, message, fiscal_year, item, detail}]` — every inherited stream,
+never concatenated · `coverage` · `history` (per-year statements with per-fact
+source + restated flags) · `reverse` (included so the assumed-vs-implied
+comparison needs no second request) · `code` (canonical for the current set).
+All derived display math (vs-price deltas, TV share of EV) is computed
+server-side — the browser divides nothing.
 
-Error envelope: `{error: {code, message, detail?}}` with the ingest/engine error taxonomy
-mapped to HTTP: UnknownTicker → 404 · FinancialCompany / UnsupportedCurrency /
-InsufficientHistory / MissingRequiredItem / InvalidAssumption → 422 with the specific
-message · Validation fail → 422 with the tie-out detail · EdgarUnavailable (cold ticker,
-all tiers exhausted) → 503 with the friendly retry message. **Third-party outages never
-produce a 500** — that path is the degradation ladder (spec 00), and `/api/health`
-exposes which tier each source is running on.
+**Status discipline (owner rule):** refusals and unavailable states are 200s
+with machine-readable reasons — `status: "refused"` (insufficient_coverage,
+validation_failed, missing_required_item, insufficient_history,
+unsupported_currency), `status: "unsupported"` (financial_company,
+known_unsupported), `status: "preset_unavailable"`, and per-leg
+`available: false`. HTTP errors are actual failures only: 404 unknown ticker ·
+400 malformed code / unknown preset / out-of-domain override (with the
+constraint text) · 503 upstream unreachable with nothing to fall back to ·
+409 workbook requested for a refused filer. Third-party outages never 500 —
+the degradation ladder absorbs them.
 
-Ops: CORS pinned to the frontend origin · modest per-IP rate limit on company endpoints
-(they fan out to EDGAR) · overrides validated against per-field bounds server-side.
+**Caching (owner rule):** `CompanyStore` holds assembled history + market inputs
+per (ticker, valuation_date), TTL 1h, LRU-capped — assumption edits recompute
+against the cached inputs and **never refetch upstream** (contract-tested with a
+counting source). The reverse solves are cached alongside (they solve against
+derived defaults, so user edits never invalidate them). Refusal verdicts are
+cached like successes; transient failures are not, so recovery is immediate.
+The SqliteCache under the EDGAR/market clients persists across restarts.
+
+Ops: CORS pinned to `FRONTEND_ORIGIN` · API keys server-side env vars only,
+never in responses or errors · overrides validated server-side against the
+engine's domain table.
 
 ## Outputs — frontend
 
