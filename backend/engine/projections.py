@@ -171,9 +171,14 @@ def project(history: FinancialHistory, assumptions: Assumptions
                     "dividends_paid": dividends, "cash_from_financing": cff,
                     "net_change_in_cash": cfo + cfi + cff}
 
-        # P1/P2 tripwires: exact by construction, asserted as engine-bug guards
-        assert abs(balance["total_assets"]
-                   - (liabilities + equity_side)) < 1e-6, "P1: BS does not balance"
+        # P1/P2 tripwires: exact by construction, asserted as engine-bug guards.
+        # Tolerances are RELATIVE: at trillion-dollar scale, float ulp on the
+        # plug arithmetic is ~1e-3 dollars — mathematically zero, and an
+        # absolute tolerance here was a real bug (caught by the diagnostic
+        # batch: 13 mega-cap filers false-asserted while fixtures passed by
+        # rounding luck).
+        assert abs(balance["total_assets"] - (liabilities + equity_side)) < 1e-9 * max(
+            1.0, abs(balance["total_assets"])), "P1: BS does not balance"
         assert abs((cfo + cfi + cff) - (cash - prev_cash)) < 1e-6 * max(
             1.0, abs(cash)), "P2: CF does not tie to Δcash"
 
