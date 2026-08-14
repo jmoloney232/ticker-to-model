@@ -368,6 +368,22 @@ conventions:
       such. The reverse DCF stays available either way — the implied recovery
       margin is most informative exactly when the forward model refuses.
 
+  - id: reinvestment_fade_warning
+    label: Reinvestment-fade mismatch warning
+    category: projections
+    default: "Warn when final-year capex > 1.5× memo D&A while final-year revenue growth is within 1.0pp of terminal g; capex is never auto-faded"
+    derivation: >
+      capex_pct is a flat 3y mean held across the forecast while growth fades to
+      terminal g — a company decelerating to ~2.5% growth while reinvesting at its
+      hypergrowth rate is internally inconsistent, and the warning names both numbers.
+    editable: false
+    tradeoff: >
+      The obvious fix — forcing capex toward D&A parity — is itself contested:
+      capex-equals-depreciation is only valid under no growth and no inflation
+      (Matthews & Rosenbloom), and survey capex typically exceeds depreciation. So the
+      engine warns instead of auto-fading, and points at the street_convention preset
+      (midpoint fade to D&A parity) as the opinionated expression of a fade.
+
   - id: unobservable_interest
     label: Unobservable interest lines
     category: projections

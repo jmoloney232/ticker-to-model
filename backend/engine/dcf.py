@@ -38,6 +38,13 @@ from .wacc import build_wacc
 TV_SHARE_INFO = 0.80          # P8 — published guidance: typical TV is 60–80%
                               # of EV; above 80% the valuation is a bet on
                               # long-run assumptions (audit task 4)
+# Reinvestment-fade mismatch (audit task 5): final-year capex still >1.5× D&A
+# while growth has faded to within 1pp of terminal g. Deliberately a WARNING,
+# not an auto-fade — capex-equals-depreciation at steady state is itself
+# contested (Matthews & Rosenbloom), and survey capex typically exceeds
+# depreciation; the street_convention preset is the opinionated fade.
+REINVEST_FADE_RATIO = 1.5
+REINVEST_FADE_G_BAND = 0.01
 LEASE_HEAVY = 0.25            # P6: operating leases vs gross debt
 UNCLASSIFIED_WARN = 0.01      # same leg as H2's revenue-materiality (owner-approved)
 WACC_STEP, G_STEP, MULT_STEP = 0.005, 0.0025, 1.0
@@ -410,6 +417,24 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                          "plan implies financing v1 does not model (no revolver); "
                          "review payout and capex assumptions.")))
             break
+
+    fy_last, fy_prev = projections[-1], projections[-2]
+    capex_n = fy_last.cashflow["capex"]
+    da_n = fy_last.cashflow["d_and_a"]
+    g_n = fy_last.income["revenue"] / fy_prev.income["revenue"] - 1
+    if (da_n > 0 and capex_n / da_n > REINVEST_FADE_RATIO
+            and abs(g_n - g) <= REINVEST_FADE_G_BAND):
+        warnings.append(EngineWarning(
+            code="reinvestment_fade_mismatch",
+            message=(f"FY{fy_last.fiscal_year}: capex is {capex_n / da_n:.1f}× "
+                     f"D&A while revenue growth has faded to {g_n:.1%} "
+                     f"(terminal g {g:.1%}) — elevated growth-era reinvestment "
+                     "is carried into a period modeled as near-mature. Capex is "
+                     "deliberately NOT auto-faded (capex-equals-depreciation at "
+                     "steady state is itself contested); the street_convention "
+                     "preset expresses a fade toward D&A parity if that is "
+                     "your view."),
+            detail={"capex_over_da": capex_n / da_n, "final_year_growth": g_n}))
 
     stub = _stub(valuation_date, fy0.end)
     if stub > 1.0:

@@ -334,6 +334,26 @@ class TestTerminalGrowthChecks:
         assert "terminal_growth_rf_ceiling" in DISPLAY_ONLY
 
 
+class TestReinvestmentFadeMismatch:
+    """Audit task 5: warn — never auto-fade — when growth-era capex is
+    carried into a near-mature final year."""
+
+    def test_fires_with_both_numbers_and_the_preset_pointer(self):
+        # capex 20% of revenue vs toy D&A (~8%) → ratio > 1.5; final-year
+        # growth equals terminal g by the linear fade
+        m = toy_model(overrides={"capex_pct": 0.20})
+        w = [w for w in m.warnings if w.code == "reinvestment_fade_mismatch"]
+        assert len(w) == 1
+        assert w[0].detail["capex_over_da"] > 1.5
+        assert "street_convention" in w[0].message
+        assert "NOT auto-faded" in w[0].message
+
+    def test_silent_at_reinvestment_parity(self):
+        # toy default: capex 8% ≈ D&A — no mismatch
+        m = toy_model()
+        assert "reinvestment_fade_mismatch" not in {w.code for w in m.warnings}
+
+
 class TestTerminalValueShare:
     def test_p8_fires_at_the_published_80_line_with_remedy(self):
         # 80.3% TV share — inside the band the old 85% threshold missed
