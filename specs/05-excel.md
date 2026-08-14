@@ -21,7 +21,7 @@ never a pasted number. openpyxl; engine remains the source of truth via a parity
 |---|---|---|
 | Cover | Company, ticker, valuation date, price + value summary, validation tie-out table, warnings, data staleness labels | Labels + literals |
 | Methodology | Every convention: default, derivation, tradeoff (from methodology.yaml) | Text |
-| Assumptions | Every assumption grouped (growth, margins, working capital, capital intensity, taxes, WACC, terminal value, toggles); each row: label, **input cell (named range)**, derivation text, default value | **Inputs (blue)** |
+| Assumptions | Every assumption grouped (growth, margins, working capital, capital intensity, taxes, WACC, terminal value, toggles); each row: label, **input cell (named range)**, derivation text, default value, **provenance** (derived / preset:&lt;name&gt; / user). **Header block prints the active preset's name and one-line rationale** (from `engine/presets.yaml`) so the workbook is self-documenting about which stated methodology produced its inputs (owner contract, 2026-08-14) | **Inputs (blue)** |
 | Hist IS / Hist BS / Hist CF | As-ingested history with fiscal-year columns; provenance notes (tag, restated flag) as cell comments | Data literals |
 | Projections | Full three-statement model FY1–FY5 | **Formulas only** |
 | DCF | WACC build (coverage → spread → Kd; Ke; weights), UFCF schedule, discount factors, both TVs, implied cross-checks, EV→equity bridge, value per share | **Formulas only** |

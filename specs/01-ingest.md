@@ -37,9 +37,14 @@ restatement resolution, and the validation gate. Knows nothing about valuation.
 - `coverage`: how much of the filing landed in **named** line items vs. residual
   buckets, computed on the latest fiscal year — `assets_named_share`,
   `liabilities_named_share`, `expenses_named_share`, `revenue_named_share`
-  (share = 1 − |residual `other_*` buckets we had to derive| / total; a filer's own
-  tagged "other" line counts as mapped), plus the top unmapped us-gaap tags by
-  absolute magnitude. Surfaced in the web app as "N% of reported line items
+  (balance-sheet share = 1 − |residual `other_*` buckets we had to derive| / total;
+  a filer's own tagged "other" line counts as mapped), plus the top unmapped us-gaap
+  tags by absolute magnitude. **`expenses_named_share` additionally counts the
+  margin-identity gap** — |revenue − EBIT − Σ named cost lines| — because a
+  real-but-tiny tagged `other_operating` line blocks the residual deriver and,
+  counted alone, masked MCD's ~$11.5B untagged cost block behind an "E100%"
+  reading (owner-approved fix, 2026-08-14; regression-tested against the MCD
+  fixture, which now reads E21%). Surfaced in the web app as "N% of reported line items
   mapped". **A falling coverage number is the signal that a filer uses tags the
   schema doesn't know about** — it is the early-warning metric for chain gaps.
   Enforced by the coverage gate (step 7): refuse below 60%, hard warning below 85%

@@ -70,15 +70,15 @@ def ufcf_schedule(projections: list[ProjectedPeriod], assumptions: Assumptions,
 def _resolve_roic(assumptions: Assumptions, g: float, wacc: float,
                   warnings: list[EngineWarning] | None) -> float:
     """Owner decision: degenerate ROIC falls back to WACC — value-neutral
-    reinvestment. An explicit user override that violates RR < 1 is rejected
-    instead (their input, their constraint)."""
+    reinvestment. An explicit user- or preset-stated value that violates
+    RR < 1 is rejected instead (their statement, their constraint)."""
     field = assumptions.fields["terminal_roic"]
-    if field.override is not None:
-        if field.override <= g:
+    if field.stated is not None:
+        if field.stated <= g:
             raise InvalidAssumptionError("terminal_roic",
                                          "must exceed terminal g (RR = g/ROIC < 1)",
-                                         field.override)
-        return field.override
+                                         field.stated)
+        return field.stated
     if field.value is None or field.value <= g:
         if warnings is not None:
             warnings.append(EngineWarning(
@@ -247,9 +247,12 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
     p4_ok = (g < wacc_build.wacc and wacc_build.wacc > 0
              and a.eff("share_count") > 0)
 
+    # P5 treats a preset-stated g exactly like a user override: presets never
+    # suppress warnings, so market_implied / street_convention g above the
+    # default ceiling warns with its provenance named.
     ceiling = min(0.025, a.eff("risk_free"))
-    p5_warn = (a.fields["terminal_growth"].override is not None
-               and a.fields["terminal_growth"].override > ceiling)
+    tg = a.fields["terminal_growth"]
+    p5_warn = tg.stated is not None and tg.stated > ceiling
 
     leases = fy0.value("operating_lease_liability", 0.0)
     p6_warn = leases > LEASE_HEAVY * expected_gross if expected_gross > 0 else leases > 0
@@ -275,8 +278,8 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
                     detail=f"g={g:.2%} < WACC={wacc_build.wacc:.2%}; WACC > 0; "
                            "shares > 0; RR < 1"),
         CheckResult("P5", "warn", "warn" if p5_warn else "pass",
-                    detail="Terminal-g override above min(2.5%, 10Y)" if p5_warn
-                    else "Terminal g within the default ceiling"),
+                    detail=f"Terminal-g ({tg.provenance}) above min(2.5%, 10Y)"
+                    if p5_warn else "Terminal g within the default ceiling"),
         CheckResult("P6", "warn", "warn" if p6_warn else "pass",
                     magnitude=leases,
                     detail=("Operating lease liability exceeds 25% of gross debt — "

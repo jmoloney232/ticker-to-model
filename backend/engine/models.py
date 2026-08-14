@@ -15,24 +15,49 @@ from market.models import MarketInputs
 
 @dataclass
 class Assumption:
-    """One editable input: derived default + derivation text + optional
-    override. The UI/CLI/workbook show all three; the engine uses .effective."""
+    """One editable input: derived default + derivation text + optional preset
+    value + optional override. Layering is strict and ordered (owner rule):
+    derived -> preset -> user override; .effective resolves top-down and
+    .provenance names the winning layer. The UI/CLI/workbook show all layers;
+    the engine uses .effective."""
 
     name: str
     value: float | bool | str | None      # derived default (None = unavailable)
     derivation: str
     unit: str = "ratio"                   # ratio | rate | days | x | usd | shares | flag
     override: float | bool | None = None
+    preset_value: float | bool | None = None
+    preset_name: str | None = None
+    preset_note: str = ""                 # "rule: <expr>" | "literal" | "solved: ..."
 
     @property
     def effective(self):
-        return self.override if self.override is not None else self.value
+        if self.override is not None:
+            return self.override
+        if self.preset_value is not None:
+            return self.preset_value
+        return self.value
+
+    @property
+    def stated(self):
+        """The non-derived layer if any (override wins) — what validation
+        treats as a deliberate user/methodology statement, else None."""
+        return self.override if self.override is not None else self.preset_value
+
+    @property
+    def provenance(self) -> str:
+        if self.override is not None:
+            return "user"
+        if self.preset_value is not None:
+            return f"preset:{self.preset_name}"
+        return "derived"
 
 
 @dataclass
 class Assumptions:
     fields: dict[str, Assumption]
     cost_structure: str                   # by_function | by_nature — branches ratios
+    active_preset: str | None = None      # set by apply_preset (incl. "derived")
 
     def eff(self, name: str):
         return self.fields[name].effective

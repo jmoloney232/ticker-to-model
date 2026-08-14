@@ -260,6 +260,50 @@ conventions:
       later projection years (memo D&A follows the capex path, embedded D&A follows
       revenue), so late-year EBITDA margins shift slightly rather than staying pinned.
 
+  - id: assumption_presets
+    label: Assumption presets
+    category: assumptions
+    default: "derived (the identity case); built-ins: market_implied, street_convention, downside — full definitions, rationales, and per-field rules render automatically from engine/presets.yaml"
+    derivation: "A preset is a stated methodology: name + one-line rationale + a derivation rule per field, held to the same standard as the derived defaults (no hand-picked numbers). Strict layering: derive from history → apply preset → apply user overrides; every assumption carries provenance (derived | preset:<name> | user) in the CLI, the UI, and the workbook's assumptions sheet"
+    editable: true
+    tradeoff: >
+      Presets transform derived defaults, never replace the derivation; they
+      pass the same domain validation as user overrides, never bypass model
+      validation (terminal g ≥ WACC still blocks, whichever preset requested
+      it), and never suppress inherited warnings. A preset that cannot be
+      applied to a filer says so with the reason — market_implied reports
+      "no solution below WACC" rather than falling back to a different lever
+      or an extreme value.
+
+  - id: unclassified_costs
+    label: Unclassified operating costs (margin-identity closure)
+    category: projections
+    default: "unclassified_costs_pct = 3y mean of (revenue − EBIT − Σ named cost lines) / revenue, projected as an explicit cost line; warning above 1% of revenue naming the percentage"
+    derivation: "Operating costs attributable to no named line item are real costs; omitting them projects a fictional margin. The closure line makes projected EBIT margin reproduce the filer's own historical margin structure by identity — for most filers it derives to ~0 and is inert"
+    editable: true
+    tradeoff: >
+      Without this line, a filer whose costs live in tags the schema doesn't map
+      (MCD's company-operated restaurant costs, ~$11.5B) projected an 89% EBIT
+      margin against a real 46% — a credibility-ending bug caught by the
+      diagnostic pass. The line is deliberately unnamed rather than guessed into
+      a category: an honest "unclassified" beats a wrong "SG&A". The lasting fix
+      per filer is a tag-chain addition; the warning names the gap so those
+      filers are findable.
+
+  - id: negative_terminal_anchor
+    label: Negative terminal anchors — honest unavailable state
+    category: terminal_value
+    default: "Gordon leg unavailable when terminal NOPAT ≤ 0; exit leg unavailable when projected FY5 EBITDA ≤ 0; each with a warning naming the anchor. Reverse DCF remains available"
+    derivation: "A perpetuity on a negative base (or a multiple of negative EBITDA) is a sign error dressed as a number; valuing a loss-making base year requires an explicit recovery view, which is the user's to state, never a default"
+    editable: false
+    tradeoff: >
+      The model declines to print a value for filers like BA's loss window rather
+      than printing a negative one. A positive-but-tiny anchor (KHC after
+      impairments) is not guarded: EV below gross debt is a legitimate statement
+      that the equity is worth ~nothing at these assumptions, and it prints as
+      such. The reverse DCF stays available either way — the implied recovery
+      margin is most informative exactly when the forward model refuses.
+
   - id: unobservable_interest
     label: Unobservable interest lines
     category: projections

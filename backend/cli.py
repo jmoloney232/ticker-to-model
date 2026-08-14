@@ -4,6 +4,10 @@ everything the dashboard will eventually show, evaluable without a UI.
 Usage:
     python -m cli MSFT
     python -m cli MSFT --set terminal_growth=0.02 --set midyear=false
+    python -m cli MSFT --preset street_convention
+    python -m cli --list-presets
+    python -m cli MSFT --preset downside --encode-set   # shareable code
+    python -m cli MSFT --set-code <CODE>
     python -m cli MSFT --json > msft.json
     python -m cli MSFT --valuation-date 2026-08-14
 
@@ -22,8 +26,17 @@ import sys
 from datetime import date
 from pathlib import Path
 
+from engine.assumptions import derive_assumptions
 from engine.dcf import build_model
+from engine.errors import EngineError
 from engine.models import Bridge, ModelResult, SensitivityGrid
+from engine.presets import (
+    Preset,
+    apply_preset,
+    decode_assumption_set,
+    encode_assumption_set,
+    load_presets,
+)
 from ingest.assemble import build_financial_history
 from ingest.cache import SqliteCache
 from ingest.edgar import EdgarClient
@@ -116,7 +129,7 @@ def _bridge_lines(b: Bridge) -> list[str]:
     return out
 
 
-def render(m: ModelResult) -> str:
+def render(m: ModelResult, preset: Preset | None = None) -> str:
     L: list[str] = []
     h, mkt = m.history, m.market
     price = mkt.price.value
@@ -127,6 +140,11 @@ def render(m: ModelResult) -> str:
              f"{mkt.price.staleness}) · Valuation date {m.valuation_date} · "
              f"History FY{h.periods[0].fiscal_year}–FY{h.periods[-1].fiscal_year} "
              f"({h.cost_structure})")
+    active = m.assumptions.active_preset
+    if active and active != "derived":
+        title = preset.title if preset is not None else active
+        L.append(f"Preset: {title} — "
+                 + (preset.rationale if preset is not None else "see presets.yaml"))
     L.append("=" * 78)
 
     L.append("")
@@ -209,12 +227,22 @@ def render(m: ModelResult) -> str:
                         for v in vals)
         L.append(f"  {label:<22}{cells}")
 
-    # assumptions echo — the defensible part; every default with its derivation
+    # assumptions echo — the defensible part; every value with its derivation
+    # AND its provenance (derived | preset:<name> | user), owner requirement:
+    # same principle as distinguishing an unmapped zero from a genuine zero
     L.append("")
-    L.append("ASSUMPTIONS (derived defaults; * = overridden)")
+    L.append("ASSUMPTIONS (provenance: ' ' = derived, p = preset, * = user override)")
     for a in m.assumptions.fields.values():
-        mark = "*" if a.override is not None else " "
-        L.append(f" {mark}{a.name:<24}{fmt(a.effective, a.unit):>12}   {a.derivation}")
+        prov = a.provenance
+        mark = "*" if prov == "user" else ("p" if prov != "derived" else " ")
+        if prov == "user":
+            desc = f"USER (derived default {fmt(a.value, a.unit)}) — {a.derivation}"
+        elif prov != "derived":
+            desc = (f"{prov} [{a.preset_note}] — "
+                    f"derived default {fmt(a.value, a.unit)}")
+        else:
+            desc = a.derivation
+        L.append(f" {mark}{a.name:<24}{fmt(a.effective, a.unit):>12}   {desc}")
 
     # WACC build-up
     w = m.wacc
@@ -283,27 +311,56 @@ def render(m: ModelResult) -> str:
 
 def run(ticker: str, edgar_source, market_provider,
         overrides: dict | None = None, valuation_date: date | None = None,
-        as_json: bool = False) -> str:
+        as_json: bool = False, preset_name: str | None = None) -> str:
     vd = valuation_date or market_today()
     history = build_financial_history(ticker, edgar_source)
     market = build_market_inputs(ticker, market_provider, as_of=vd)
-    result = build_model(history, market, valuation_date=vd, overrides=overrides)
+    # strict layering (owner rule): derive -> preset -> user overrides
+    preset = assumptions = None
+    if preset_name:
+        presets = load_presets()
+        if preset_name not in presets:
+            raise SystemExit(f"unknown preset {preset_name!r} "
+                             f"(available: {', '.join(presets)})")
+        preset = presets[preset_name]
+        assumptions = apply_preset(derive_assumptions(history, market), preset,
+                                   history, market, vd)
+    result = build_model(history, market, valuation_date=vd,
+                         overrides=overrides, assumptions=assumptions)
     if as_json:
         return json.dumps(dataclasses.asdict(result), default=str, indent=2)
-    return render(result)
+    return render(result, preset=preset)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m cli",
         description="Ticker → DCF valuation summary (phase 2 CLI)")
-    parser.add_argument("ticker")
+    parser.add_argument("ticker", nargs="?")
     parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
                         help="override an assumption (repeatable)")
+    parser.add_argument("--preset", default=None, metavar="NAME",
+                        help="run under a named assumption preset "
+                             "(see --list-presets)")
+    parser.add_argument("--list-presets", action="store_true",
+                        help="list available presets with their rationales")
+    parser.add_argument("--set-code", default=None, metavar="CODE",
+                        help="apply a compact assumption-set code "
+                             "(explicit --preset/--set win on conflict)")
+    parser.add_argument("--encode-set", action="store_true",
+                        help="print the compact code for this preset+overrides")
     parser.add_argument("--json", action="store_true",
                         help="dump the full ModelResult as JSON")
     parser.add_argument("--valuation-date", type=date.fromisoformat, default=None)
     args = parser.parse_args(argv)
+
+    if args.list_presets:
+        for p in load_presets().values():
+            print(f"{p.name:<20} {p.title}")
+            print(f"{'':<20} {p.rationale}")
+        return 0
+    if not args.ticker:
+        parser.error("ticker is required (or use --list-presets)")
 
     load_dotenv()
     user_agent = os.environ.get("EDGAR_USER_AGENT", "")
@@ -317,14 +374,20 @@ def main(argv: list[str] | None = None) -> int:
                      os.environ.get("ALPACA_API_SECRET_KEY", "")),
         FredClient(os.environ.get("FRED_API_KEY", "")),
         cache=cache)
-    overrides = dict(parse_override(s) for s in args.set)
+    code_preset, code_overrides = (decode_assumption_set(args.set_code)
+                                   if args.set_code else (None, {}))
+    overrides = {**code_overrides, **dict(parse_override(s) for s in args.set)}
+    preset_name = args.preset or code_preset
 
     try:
         print(run(args.ticker, edgar, provider, overrides or None,
-                  args.valuation_date, args.json))
-    except (IngestError, MarketDataError) as exc:
+                  args.valuation_date, args.json, preset_name=preset_name))
+    except (IngestError, MarketDataError, EngineError) as exc:
         print(exc.user_message, file=sys.stderr)
         return 1
+    if args.encode_set:
+        print("Assumption-set code:",
+              encode_assumption_set(preset_name, overrides or None))
     return 0
 
 

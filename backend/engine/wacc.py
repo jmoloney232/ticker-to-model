@@ -26,6 +26,9 @@ def build_wacc(history: FinancialHistory, market: MarketInputs,
     beta_field = a.fields["beta"]
     if beta_field.override is not None:
         beta_used, beta_source = beta_field.override, "override"
+    elif beta_field.preset_value is not None:
+        beta_used = beta_field.preset_value
+        beta_source = f"preset:{beta_field.preset_name}"
     elif market.beta is None:
         beta_used, beta_source = 1.0, "fallback_1.0"
     elif a.eff("beta_adjusted"):

@@ -1,0 +1,132 @@
+# Assumption presets — a preset is a STATED METHODOLOGY, not a mood.
+#
+# Every preset carries a name, a one-line rationale, and a derivation rule per
+# field it sets, held to the same standard as the derived defaults: no
+# hand-picked numbers. Presets live in data, not code — adding one requires no
+# code change, and the methodology surface renders this file automatically
+# (spec 06). The Excel assumptions sheet prints the active preset's name and
+# rationale (spec 05).
+#
+# Layering is strict and ordered: derive from history -> apply preset -> apply
+# user overrides per field. Presets transform derived defaults; they never
+# replace the derivation. Every assumption carries provenance
+# (derived | preset:<name> | user) end to end.
+#
+# ── Schema (schema_version 1) ────────────────────────────────────────────────
+# presets: list of
+#   name:          machine name (stable identifier; CLI --preset, encoding)
+#   title:         display name
+#   rationale:     one-line defence — REQUIRED for built-ins, optional for
+#                  user-created presets (a published methodology needs a
+#                  defence; a user's own view doesn't)
+#   builtin:       true for the shipped four
+#   applicability: optional conditions; unmet -> preset UNAVAILABLE with the
+#                  reason stated (never a quiet degrade). Keys:
+#                    cost_structure:     [by_function|by_nature]
+#                    min_history_years:  N
+#                    absent_warnings:    [ingest warning codes that must NOT
+#                                         be present on the filer]
+#   fields:        map of assumption name -> field spec:
+#     form: rule    -> rule: "<expr>" evaluated against the derived-assumption
+#                      namespace (see engine/presets.py NAMESPACE for allowed
+#                      names; operators + - * /, unary -, min/max/abs, numbers)
+#     form: literal -> value: <number|bool> — a fixed value with no derivation;
+#                      exists so user-created presets share this schema later
+#                      (built-ins are rule-based wherever possible)
+#     form: solved  -> solver: reverse_dcf, target: market_price — bisection
+#                      on this field until the Gordon leg equals the target;
+#                      no solution -> preset unavailable with the reason,
+#                      NEVER a silent fallback to another field or an extreme
+#     optional: true -> skip when the field does not exist for this filer
+#                      (structural absence, e.g. cogs_pct on by_nature filers)
+#   The form of every applied field is surfaced in provenance detail.
+#
+# Preset values pass the same domain validation as user overrides, and presets
+# never bypass model validation: terminal growth at or above WACC still blocks,
+# whichever preset requested it. Presets never suppress inherited warnings.
+
+schema_version: 1
+
+presets:
+  - name: derived
+    title: Derived defaults
+    builtin: true
+    rationale: >-
+      The filer's own reported history through the documented derivation rules
+      — the identity case; every field keeps provenance "derived".
+    fields: {}
+
+  - name: market_implied
+    title: Market-implied terminal growth
+    builtin: true
+    rationale: >-
+      Terminal growth solved so the Gordon leg reproduces the current market
+      price with every other default untouched — "what you'd have to believe",
+      as a starting point to adjust from. Unavailable, with the reason stated,
+      when no solution exists below WACC.
+    fields:
+      terminal_growth:
+        form: solved
+        solver: reverse_dcf
+        target: market_price
+
+  - name: street_convention
+    title: Street convention
+    builtin: true
+    rationale: >-
+      A defensible less-conservative lens: terminal growth ceilinged at the
+      10Y instead of 2.5% (nominal-GDP anchor), capex normalized halfway to
+      historical D&A (midpoint of a linear fade to maintenance parity), and
+      tax at the marginal statutory rate from FY1.
+    fields:
+      terminal_growth:
+        # the default's 2.5% ceiling replaced by the 10Y itself; the 1.5%
+        # distorted-rates floor is kept from the default derivation
+        form: rule
+        rule: "max(0.015, risk_free)"
+      capex_pct:
+        # street fades capex to D&A parity by the terminal year; a single
+        # window ratio approximates a linear fade by its midpoint
+        form: rule
+        rule: "(capex_pct + da_pct_revenue_hist) / 2"
+      effective_tax_fy1:
+        # marginal from FY1 (the default fades effective -> marginal)
+        form: rule
+        rule: "marginal_tax"
+
+  - name: downside
+    title: Downside (history-anchored)
+    builtin: true
+    rationale: >-
+      Rule-based stress from the filer's own record: the full cost stack from
+      the worst-EBIT-margin year in the observed window, half the FY1 growth
+      premium over terminal g (a faster fade, never raised for decliners), and
+      beta at max(raw, 1.0) — the Blume mean-reversion benefit declined, and
+      sub-market betas stressed to the market's (correlations rise toward 1 in
+      drawdowns).
+    applicability:
+      min_history_years: 2
+    fields:
+      revenue_growth_fy1:
+        form: rule
+        rule: "min(revenue_growth_fy1,
+                   terminal_growth + (revenue_growth_fy1 - terminal_growth) / 2)"
+      beta:
+        form: rule
+        rule: "max(beta_raw, 1.0)"
+      cogs_pct:
+        form: rule
+        rule: "worst_cogs_pct"
+        optional: true          # by_function filers only (structural absence)
+      rnd_pct:
+        form: rule
+        rule: "worst_rnd_pct"
+      sga_pct:
+        form: rule
+        rule: "worst_sga_pct"
+      other_opex_pct:
+        form: rule
+        rule: "worst_other_opex_pct"
+      unclassified_costs_pct:
+        form: rule
+        rule: "worst_unclassified_costs_pct"

@@ -139,3 +139,27 @@ rates), and a flat, labeled line is more honest than a fabricated growth rule.
 lease additions through the cash flow statement. Logged as the **first v1.1
 candidate** — it is chain-of-consequence work (BS, CF, and the lease_heavy
 disclosure all move together), not a one-line change.
+
+## 7. Cost-line tag chains for MCD-class and AMZN-class filers (queued chain round)
+
+**What breaks:** nothing anymore — but for four filers a material share of
+operating costs lives in tags the schema doesn't map (MCD 43.5% of revenue:
+company-operated restaurant expenses and franchise occupancy costs; AMZN 37.8%:
+fulfillment / technology-and-content / marketing; ABBV 21.6%; CAT 6.3%). Since
+the 2026-08-14 fix these costs are projected via the explicit
+`unclassified_costs_pct` closure line (margins correct by identity) and surfaced
+by the `unclassified_costs` warning and the expense-coverage metric — honest,
+but the projected line is *unnamed*, so the workbook's income statement will
+show "unclassified costs" instead of the filer's real cost categories.
+
+**Why:** these filers use industry- or company-specific us-gaap tags
+(`FoodAndPackagingExpense`, `FulfillmentExpense`-class tags) that no fallback
+chain currently covers; guessing them into SG&A would be a wrong label where
+"unclassified" is a true one.
+
+**Fixing it would require:** the standard chain round — per-filer verification
+of each candidate tag against the filed statements (owner process: chain adds
+are verified per filer, never added speculatively), then re-running the scan
+and the diagnostic batch. **Queued as the next ingest chain round** (owner
+decision, 2026-08-14). The expense-coverage metric now reads E21% for MCD, so
+the fixed alarm also measures this queue's progress.

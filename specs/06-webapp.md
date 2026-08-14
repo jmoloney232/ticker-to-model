@@ -62,6 +62,9 @@ Routes:
 - `/methodology` — every convention from `GET /api/methodology`: default, derivation
   rule, tradeoff, which surfaces use it. This page is a **product requirement**
   (owner): everything financial used to build the models must be navigable here.
+  **Assumption presets render automatically from `engine/presets.yaml`** (name,
+  rationale, per-field rules) — adding a preset requires no code change and no
+  separate methodology edit; the page reads the file (owner contract, 2026-08-14).
 
 Degraded states (each designed, not accidental): market-data-down → historicals +
 assumptions shown, DCF section replaced with reason card · stale-cache → chips ·

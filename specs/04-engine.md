@@ -43,6 +43,7 @@ projection years (methodology surface carries this).
 | Revenue growth FY2–FY5 | linear fade `g_i = g_1 + (i−1)/4·(g_term − g_1)`; FY5 growth = terminal g exactly | — (curved fade is a documented v1.1 candidate; see known-limitations) |
 | Gross margin *(by_function only)* | 3y mean gross_profit/revenue (D&A-inclusive as filed) | by_function guarantees COGS in-window (mixed windows classify by_nature) |
 | R&D / SG&A / other operating, each % of revenue | 3y mean of line/revenue for lines present; by_nature filers project whichever lines exist — `other_operating` carries the cost block | zero_logged line → 0% with the inherited warning surfaced |
+| **Unclassified costs % of revenue** (margin-identity closure; owner-approved 2026-08-14) | 3y mean of `(revenue − EBIT − Σ named cost lines)/revenue` — operating costs attributable to **no** named line item, projected as an explicit cost line so projected EBIT margin reproduces the filer's own historical margin structure **by identity**. Without it, an MCD-class filer (real-but-tiny `other_operating` tag blocking the residual deriver) projected an 89% margin against a real 46%. `unclassified_costs` warning above 1% of revenue (same materiality leg as H2), naming the percentage | identity closes for most filers → derives to ~0 and the line is inert |
 | D&A (memo) | rate = 3y mean of `d_and_a_t / ppe_net_{t−1}` (beginning balance) | PP&E unmapped → 3y mean % of revenue (disclosed) |
 | Capex % of revenue | 3y mean | required item — always present |
 | SBC % of revenue | 3y mean | zero_logged → 0% + warning (add-back toggle becomes a no-op; disclosed) |
@@ -60,7 +61,7 @@ projection years (methodology surface carries this).
 | Risk-free rate | Spot DGS10 (override for a normalized rate) | cached/snapshot with staleness label |
 | Terminal growth g | `max(1.5%, min(2.5%, 10Y yield))` — floor prevents distorted-rate regimes from mechanically crushing valuations | — |
 | Terminal ROIC (`ROIC_t`) | 3y mean of `EBIT_t(1−marginal) / IC_{t−1}`; IC = gross debt + stockholders equity + NCI + preferred + temporary equity − cash − STI (beginning balance) | IC ≤ 0 years dropped; none usable or ROIC_t ≤ g → **ROIC_t = WACC** + `roic_fallback` warning stating plainly that terminal reinvestment is value-neutral because returns could not be estimated |
-| Exit EV/EBITDA multiple | current EV / FY0 EBITDA; EV = mcap + gross debt − cash − STI (**`investments_combined_unsplit` excluded**, per the ingest owner decision); EBITDA = EBIT + memo-basis D&A | EBITDA ≤ 0 → exit leg marked unavailable (Gordon still runs) |
+| Exit EV/EBITDA multiple | current EV / FY0 EBITDA; EV = mcap + gross debt − cash − STI (**`investments_combined_unsplit` excluded**, per the ingest owner decision); EBITDA = EBIT + memo-basis D&A | EBITDA ≤ 0 → exit leg marked unavailable (Gordon still runs if its own anchor is positive) |
 | Synthetic-Kd coverage | `(Σ 3y EBIT)/(Σ 3y interest_expense)` — ratio of sums, not mean of ratios (a near-zero interest year would explode a per-year ratio) | interest zero_logged → top coverage bracket, disclosed |
 | Operating cash floor | 2% of revenue (cash below this is operating, not excess) | — |
 | Toggles | Mid-year discounting (default on) · SBC add-back (default off = expensed) · Kd method (default synthetic; embedded toggle falls back to synthetic + warning when interest is zero_logged) · beta adjustment (default Blume) | — |
@@ -71,6 +72,65 @@ same as a zero that means "genuinely zero" — engine output, CLI, and UI all la
 zero_logged inputs and pass the inherited warnings through, including
 `coverage_low` and `immaterial_cash_residual` (mandatory pass-throughs), and the
 `share_count_derived` / `ebit_derived` provenance warnings.
+
+## Assumption presets (owner feature, 2026-08-14)
+
+**A preset is a stated methodology, not a mood**: name + one-line rationale + a
+derivation rule per field it sets, held to exactly the same standard as the derived
+defaults — no hand-picked numbers. Presets live in **`engine/presets.yaml`** (data,
+not code — adding one requires no code change; the schema is documented in the file
+header), parsed and applied by `engine/presets.py`.
+
+**Layering is strict and ordered:** derive from history → `apply_preset` →
+`apply_overrides`. Presets transform derived defaults; they never replace the
+derivation. Every `Assumption` carries the full stack (`value` = derived,
+`preset_value`/`preset_name`/`preset_note`, `override`) and exposes `.effective`
+(top-down resolution) and `.provenance` (`derived` | `preset:<name>` | `user`) —
+displayed by the CLI, the UI, and the workbook's assumptions sheet (spec 05
+contract). Same principle as distinguishing an unmapped zero from a genuine zero.
+
+**Field forms** (both supported from the start; tagged in provenance detail):
+- `rule` — an expression over the derived-value namespace, evaluated by a
+  whitelisted-AST evaluator (names, numbers, `+ − × ÷`, unary minus,
+  `min`/`max`/`abs`; no attribute access, no eval). Namespace = every numeric
+  derived assumption by field name, plus `market_price`, `beta_raw` (falls back to
+  the derived beta when the regression is unavailable — `max(beta_raw, 1.0)` then
+  resolves to the same 1.0 stress), `da_pct_revenue_hist` (3y mean D&A/revenue),
+  and `worst_*` cost ratios from the minimum-EBIT-margin year in the observed
+  window (`worst_fy`, `worst_ebit_margin`, `worst_{cogs,rnd,sga,other_opex,
+  unclassified_costs}_pct`).
+- `literal` — a fixed value with no derivation. Exists so user-created presets can
+  share the schema later without migration; built-ins are rule-based wherever
+  possible and the rationale field is required for built-ins only (a published
+  methodology needs a defence; a user's own view doesn't).
+- `solved` — bisection via `engine/reverse.py` (`solver: reverse_dcf`,
+  `target: market_price`). No solution → the preset is **unavailable with the
+  reason** (`no solution below WACC` named, never numbered) — never a silent
+  fallback to a different field or an extreme value.
+
+**The four built-ins** (exact rules in presets.yaml): `derived` (identity case —
+reproduces the golden output exactly, tested), `market_implied` (terminal growth
+solved so the Gordon leg reproduces the market price, all else untouched — "what
+you'd have to believe"), `street_convention` (terminal g ceiling at the 10Y
+`max(0.015, risk_free)`; capex at the midpoint of a fade to historical D&A parity
+`(capex_pct + da_pct_revenue_hist)/2`; tax at marginal from FY1), `downside`
+(worst-year cost stack; FY1 growth at half its premium over terminal g, never
+raised for decliners; beta `max(beta_raw, 1.0)`).
+
+**Guardrails (all tested):** preset values pass the same `_DOMAINS` validation as
+user overrides; model validation still runs after application (terminal g ≥ WACC
+**blocks** whichever preset requested it); inherited warnings are never suppressed
+(P5 treats a preset-stated g like an override, with provenance named); a preset
+that can't be applied to a filer raises `PresetUnavailableError` with the stated
+reason (applicability keys: `cost_structure`, `min_history_years`,
+`absent_warnings`; per-field `optional: true` covers structural absence like
+`cogs_pct` on by_nature filers). The schema is open for additional presets and
+per-field adjusters later.
+
+**Shareable encoding:** `encode_assumption_set(preset, overrides)` /
+`decode_assumption_set(code)` — compact url-safe zlib+base64 of (preset name, user
+overrides) only. Derived values are never encoded: they recompute from the filer's
+history, so a shared code stays honest as filings update. No persistence layer.
 
 ## Projection mechanics (FY1–FY5)
 
@@ -178,6 +238,21 @@ Mid-year on → discount at `t_N − 0.5` (perpetual flows arrive through each y
 regardless of the mid-year toggle** — a sale is a point-in-time year-end event. This
 asymmetry is deliberate, documented, and unit-tested (mid-year is worth ~2–4% of value;
 a bug here is invisible and material).
+
+**Negative terminal anchors (owner-approved 2026-08-14):** a perpetuity on negative
+`NOPAT_{N+1}` or a multiple of negative `EBITDA_N` is a sign error dressed as a
+number, not a valuation. Each leg independently reports an **honest unavailable
+state** with the anchor named (`terminal_anchor_negative` warning per leg, magnitude
+in the detail): Gordon guards on the NOPAT anchor, exit on `EBITDA_N` (in addition
+to the existing FY0-EBITDA gate on the multiple itself). Sensitivity grids are
+suppressed for unavailable legs (25 variations of a sign error help no one); P8
+reports "not computable". The model still **builds** — inherited warnings, checks,
+projections, and the assumptions echo all render — and the **reverse DCF stays
+available**: the implied recovery margin (e.g., BA) is informative precisely when
+the forward model refuses to print a value. A *positive-but-tiny* anchor (KHC after
+its impairment window) is NOT guarded: its negative equity value comes from the
+EV→equity bridge (EV below gross debt) and is a legitimate model statement, printed
+as such.
 
 **Implied cross-checks** (standard practitioner discipline; replaces a comps-less
 disclaimer; closed forms shared verbatim by engine and workbook for parity):

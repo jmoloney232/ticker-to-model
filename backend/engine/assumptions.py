@@ -300,7 +300,12 @@ def _share_proxy(history: FinancialHistory) -> float:
 # constraints (g < WACC, RR < 1) are P4's job at build time.
 _DOMAINS: dict[str, tuple[float, float, str]] = {
     "revenue_growth_fy1": (-0.50, 1.00, "FY1 growth within [-50%, +100%]"),
-    "terminal_growth": (0.0, 0.06, "terminal g within [0%, 6%]"),
+    # widened from [0%, 6%] for the preset feature (2026-08-14): market-implied
+    # terminal growth legitimately reaches 6-10% (MSFT 6.2%) and below zero
+    # (VZ -0.7% — a decliner-in-perpetuity view). The HARD constraint is and
+    # remains g < WACC (P4 blocks); the domain only catches nonsense inputs,
+    # and P5 warns on any stated g above the default ceiling.
+    "terminal_growth": (-0.02, 0.10, "terminal g within [-2%, 10%]"),
     "effective_tax_fy1": (0.0, 0.60, "tax rate within [0%, 60%]"),
     "marginal_tax": (0.0, 0.60, "tax rate within [0%, 60%]"),
     "payout_ratio": (0.0, 1.0, "payout within [0, 1]"),

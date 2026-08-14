@@ -19,3 +19,14 @@ class InvalidAssumptionError(EngineError):
             f"Assumption {field!r} = {value!r} violates: {constraint}.",
             {"field": field, "constraint": constraint, "value": value},
         )
+
+
+class PresetUnavailableError(EngineError):
+    """A preset that cannot be applied to this filer SAYS SO — it never
+    degrades quietly (owner guardrail). Always names the preset and why."""
+
+    def __init__(self, preset: str, reason: str):
+        super().__init__(
+            f"Preset {preset!r} is unavailable for this filer: {reason}",
+            {"preset": preset, "reason": reason},
+        )
