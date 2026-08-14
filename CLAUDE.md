@@ -41,13 +41,26 @@ Build and verify each phase before starting the next.
 | 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done — 130 tests, 9 real-filing fixtures; final scan: 23/27 non-financials build, DE coverage-refused, GE spin-year isolated, XOM+NEE honestly rejected; limitations in docs/known-limitations.md** |
 | 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | done (owner-reviewed) — incl. reverse DCF, diagnostic fixes (margin-identity closure, negative-anchor guards), assumption presets with provenance |
 | 3 | `backend/excel/` — formula-driven workbook | **built — 7 sheets, engine-field-named ranges, live checks, semantic guards in formulas; gated by LibreOffice round-trip (MSFT/MCD/GOOGL cell-diff vs engine, KHC unavailable-states) + liveness tests; awaiting owner review** |
-| 4 | `backend/app/` + `frontend/` — API, dashboard, download | not started |
+| 4 | `backend/app/` + `frontend/` — API, dashboard, download | **API done (owner-reviewed); frontend built — direction 1c, all states, 20 tests; g-grid widened to 5×9 @25bp (owner decision); awaiting owner review** |
 
 Dev: `cd backend && .venv/bin/python -m pytest` (venv via `python3 -m venv .venv` +
-`pip install httpx pyyaml pytest ruff openpyxl`). The Excel round-trip gate needs
-LibreOffice (`brew install --cask libreoffice`); without it those tests skip
-loudly and the phase 3 gate has NOT run. Fixture refresh:
+`pip install httpx pyyaml pytest ruff openpyxl fastapi uvicorn`). The Excel
+round-trip gate needs LibreOffice (`brew install --cask libreoffice`); without it
+those tests skip loudly and the phase 3 gate has NOT run. Fixture refresh:
 `EDGAR_USER_AGENT=... python -m ingest.snapshot MSFT KO COST KHC JPM`.
+Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
+`127.0.0.1:8000`); `npm test` (Vitest), `npm run build` (typecheck + bundle),
+`npm run lint:ds` (token adherence — raw colors/fonts outside `tokens.css` fail).
+
+## Decision log (recent additions)
+
+- **Sensitivity g-axis (owner, 2026-08-14):** WACC × g grid is 5×9 — g ±100 bp
+  at 25 bp steps (was 5×5 at 50 bp), symmetric, base center; convention in
+  methodology.yaml. Old cells survive verbatim as the new even columns.
+- **Frontend direction (owner, 2026-08-14):** mockup board 1c "Bridge"; DS
+  extensions approved: IBM Plex Mono (self-hosted, committed woff2) + --warn /
+  --down / --down-on-dark. Frontend deps stay react/react-dom only; no
+  Playwright without explicit sign-off (outside-project browser download).
 
 ## Architecture
 

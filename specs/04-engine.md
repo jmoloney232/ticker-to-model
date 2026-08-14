@@ -300,9 +300,12 @@ restaurant / airline names — COST exercises this).
 
 ## Sensitivity grids
 
-Two 5×5 grids of value per share: **WACC × terminal g** (Gordon) and **WACC × exit
-multiple**. Center = base case; steps ±0.5% WACC, ±0.5% g, ±1.0× multiple. Full DCF
-re-computed per cell (only the varied inputs change).
+Two grids of value per share: **WACC × terminal g** (Gordon, 5×9) and **WACC × exit
+multiple** (5×5). Center = base case; WACC rows ±1.0% at 0.5% steps; g columns ±1.0%
+at **0.25%** steps (owner decision 2026-08-14 — value is convex in g approaching WACC,
+so 50 bp is coarsest exactly where the grid is most informative; the span stays the
+symmetric, citable ±100 bp); multiple columns ±2.0× at 1.0× steps. Full DCF re-computed
+per cell (only the varied inputs change).
 
 ## Outputs — `ModelResult`
 

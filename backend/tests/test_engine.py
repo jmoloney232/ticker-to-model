@@ -254,7 +254,8 @@ class TestProperties:
         for grid_name, base in (("wacc_x_g", m.bridges["gordon"].value_per_share),
                                 ("wacc_x_multiple",
                                  m.bridges["exit_multiple"].value_per_share)):
-            center = m.sensitivity[grid_name].cells[2][2]
+            grid = m.sensitivity[grid_name]
+            center = grid.cells[len(grid.rows) // 2][len(grid.cols) // 2]
             assert center == pytest.approx(base, rel=1e-12), grid_name
 
     def test_growth_cap_binds_and_uncapped_is_displayed(self):

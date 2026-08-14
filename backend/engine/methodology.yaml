@@ -172,6 +172,14 @@ conventions:
       standard practitioner discipline and recovers most of the value of comps with no
       new data.
 
+  - id: sensitivity_grids
+    label: Sensitivity grid shape
+    category: terminal_value
+    default: "WACC × terminal g: 5 × 9, WACC ±1.0% at 0.5% steps, g ±1.0% at 0.25% steps; WACC × exit multiple: 5 × 5, ±2.0× at 1.0× steps. Base case is the center cell of each."
+    derivation: "Every cell is a full re-computation at that cell's WACC and g/multiple — the g grid re-projects the whole forecast per column (the growth path fades INTO terminal g), never interpolates"
+    editable: false
+    tradeoff: "Value is convex in g as it approaches WACC, so 50 bp g-steps are coarsest exactly where the grid is most informative; 25 bp is the common practitioner convention. The span stays a symmetric ±100 bp (owner decision 2026-08-14) — a downside-biased span was considered and rejected as a stance the grid shouldn't silently take."
+
   - id: implied_crosscheck
     label: Implied g ↔ implied multiple cross-check
     category: terminal_value

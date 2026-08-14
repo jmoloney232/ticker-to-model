@@ -66,40 +66,66 @@ Ops: CORS pinned to `FRONTEND_ORIGIN` · API keys server-side env vars only,
 never in responses or errors · overrides validated server-side against the
 engine's domain table.
 
-## Outputs — frontend
+## Outputs — frontend (as built, phase 4 part 2 — owner picked direction 1c, 2026-08-14)
+
+The mockup (`docs/design/valuation-tool-directions.dc.html`, board **1c
+"Bridge"**) is the specification; tokens extracted per
+`docs/design/tokens-proposal.md` into `frontend/src/tokens.css`. Two approved
+DS extensions: **IBM Plex Mono** as `--font-mono` (self-hosted woff2 committed
+under `frontend/public/fonts/` — no runtime font CDN call) and the semantic
+tones `--warn` / `--down` / `--down-on-dark`. An adherence lint
+(`scripts/adherence.mjs`, `npm run lint:ds`) forbids raw colors and fonts
+outside tokens.css; the mockup's structural constants (board width, chart
+geometry, grid column specs) stay component-level, annotated `ds:`.
+Hand-rolled history routing, zero runtime dependencies beyond react/react-dom.
+Desktop tool at the mockup's fixed 1440px board — no mobile layout (owner).
 
 Routes:
 
-- `/` — ticker input; example tickers; clear rejection messages (bank/insurer/REIT)
-  rendered as first-class content, not error styling.
-- `/company/:ticker` — the dashboard:
-  - **Header:** value per share (both TV methods) vs current price, upside/downside.
-  - **Validation banner:** green "statements tie" / yellow warnings / red fail —
-    always visible, never buried (non-negotiable #3).
-  - **Assumptions panel:** grouped (Growth · Margins · Working capital · Capital
-    intensity · Taxes · WACC · Terminal value · Conventions). Every field shows its
-    default, its derivation sentence ("3-yr avg DSO of 47 days"), and highlights
-    overrides with a per-field and global reset. Edits debounce → `POST /model` →
-    dashboard updates. Toggles (mid-year, SBC, Kd method, beta) shown with one-line
-    tradeoffs and a link to /methodology.
-  - **Charts:** EV→equity bridge waterfall · historical + projected revenue/margins ·
-    UFCF schedule · sensitivity heat grids (both) · implied cross-check callouts
-    ("your 12.0× exit implies g = 3.1%").
-  - **Warnings list:** restatements, 53-week years, lease_heavy, beta fallback,
-    staleness chips ("price as of …", "financials cached …").
-  - **Download** button → workbook with current overrides baked in as the workbook's
-    input cells.
-- `/methodology` — every convention from `GET /api/methodology`: default, derivation
-  rule, tradeoff, which surfaces use it. This page is a **product requirement**
-  (owner): everything financial used to build the models must be navigable here.
-  **Assumption presets render automatically from `engine/presets.yaml`** (name,
-  rationale, per-field rules) — adding a preset requires no code change and no
-  separate methodology edit; the page reads the file (owner contract, 2026-08-14).
+- `/` — ticker entry; fixture examples; one-paragraph pitch.
+- `/company/:ticker` — the 1c board:
+  - **Header strip:** ticker input (navigates on Enter) · company name · price +
+    as-of + staleness chip · filing basis (FY/form/filed) · WACC + β · the four
+    presets from `GET /api/presets` as always-visible tiles (title + rationale,
+    ● active / ○ inactive); "derived defaults" tile = no preset.
+  - **Hero (reversed steel field):** assumed vs market-implied perpetual growth
+    at 52px with the gap in pp; no-solution solves stated in words. Straddle
+    chart: Gordon and exit bars (hatched) around the market-price bar, deltas
+    from the API's `vs_price` (`--down-on-dark` when below); an unavailable leg
+    renders as a dashed reasoned plate. Caption sentence composed from API
+    fields only.
+  - **Assumptions:** two balanced columns, presentation-only grouping (unknown
+    fields land in "Other", never dropped). Per row: label · value input in
+    display units (edits parsed back to engine-native) · provenance glyph + source
+    (■ derived / □ preset / ● you / ƒ computed) · per-field reset on overrides;
+    global reset in the pane band. The hovered row's rule prints in a fixed
+    **inspector strip** at the pane's foot (1a's device, adopted); overridden
+    rows also show their derived default there. Out-of-domain override → 400
+    constraint text shown, state reverted to last good.
+  - **Sensitivity pane:** both heat grids (WACC × g 5×9, WACC × multiple 5×5),
+    mockup heat ramp, base cell ringed, null cells "—", unavailable grids as
+    reasoned text. Stat block: cells reaching price · TV share of EV both legs ·
+    fields at derived default · coverage shares. Market-implied solves table
+    (all four, no-solution states in words).
+  - **Caveats:** every warning from every origin, structured; a code repeating
+    4+ times folds into a disclosure (all rows still rendered — nothing
+    droppable); `coverage_low` never folds and is marked in `--down`. Any failed
+    check → loud rust band directly under the hero.
+  - **Download workbook** → `GET /api/workbook/{ticker}.xlsx?code=` with the
+    model response's canonical code — screen == download by construction.
+- `/methodology` — conventions + presets from `GET /api/methodology`, grouped by
+  category; presets render automatically from `engine/presets.yaml` (owner
+  contract, 2026-08-14).
 
-Degraded states (each designed, not accidental): market-data-down → historicals +
-assumptions shown, DCF section replaced with reason card · stale-cache → chips ·
-cold ticker + EDGAR down → friendly full-page retry state · validation fail → red
-banner + detail table, no model shown.
+State machine per the status discipline: `ok` → board · `refused` /
+`unsupported` → full-width reasoned card (first-class content, registration
+marks, machine detail block) · `preset_unavailable` → card + "return to derived
+defaults" · 404 → unknown-ticker card · 503/network → retry card ("nothing
+cached yet — try again") · loading → quiet mono note; recompute-in-flight → a
+thin steel busy hairline under the header (static under
+`prefers-reduced-motion`). The share code lives in the URL (`?c=`), written via
+`replaceState` after each ok response and decoded through `GET /api/code/{code}`
+on load; malformed codes are dropped and the derived model builds.
 
 ## Invariants
 
@@ -116,12 +142,15 @@ Unknown/unmapped error codes render the generic friendly failure card (and log).
 
 ## How tested
 
-- **API contract tests** against a fixture-backed app (no live third-party calls):
-  every endpoint, every error mapping, the degradation tiers via mocked providers,
-  override validation (in-bounds, out-of-bounds, unknown field), workbook endpoint
-  returns valid xlsx with overrides applied.
-- **Schema snapshots** of API responses per fixture ticker (drift = deliberate change).
-- **Frontend:** v1 keeps it light — component tests for the assumptions panel
-  (default/override/reset logic) and one Playwright happy path: search MSFT → see
-  dashboard → change growth → value updates → download workbook. Degraded states
-  exercised via mocked API responses.
+- **API contract tests** (`tests/test_api.py`, 21) against a fixture-backed app
+  (no live third-party calls): every endpoint and state, engine-parity to
+  1e-12, screen == downloaded workbook via LibreOffice recalc, edits never
+  refetch upstream (counting source), override validation, code round-trip.
+- **Frontend** (`npm test`, Vitest + Testing Library, 20): assumptions panel
+  default/override/reset/unit-parsing/null-value/unknown-field logic; contract
+  states (unavailable legs, folded + hard caveats, failed checks, refusal and
+  preset-unavailable cards, no-solution solves); page-level fetch loop against
+  a stubbed API asserting values render verbatim and the workbook link carries
+  the same code. `npm run build` typechecks; `npm run lint:ds` enforces token
+  adherence. A browser E2E (Playwright) is deliberately absent — its browser
+  download is a new outside-project dependency needing owner sign-off.

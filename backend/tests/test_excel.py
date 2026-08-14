@@ -160,8 +160,8 @@ def assert_roundtrip(m, cmap, wb) -> None:
         if grid_key not in m.sensitivity:
             continue
         cells = m.sensitivity[grid_key].cells
-        for i in range(5):
-            for j in range(5):
+        for i in range(len(cells)):
+            for j in range(len(cells[i])):
                 check(f"sens:{sens_key}:{i}:{j}", cells[i][j])
 
     assert wb["Model"][cmap["model:ok_bs"][1]].value == "OK"

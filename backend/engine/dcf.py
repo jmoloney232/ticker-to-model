@@ -31,8 +31,12 @@ from .wacc import build_wacc
 TV_SHARE_INFO = 0.85          # P8: value is mostly terminal
 LEASE_HEAVY = 0.25            # P6: operating leases vs gross debt
 UNCLASSIFIED_WARN = 0.01      # same leg as H2's revenue-materiality (owner-approved)
-WACC_STEP, G_STEP, MULT_STEP = 0.005, 0.005, 1.0
+WACC_STEP, G_STEP, MULT_STEP = 0.005, 0.0025, 1.0
 GRID_OFFSETS = (-2, -1, 0, 1, 2)
+# g axis only (owner decision 2026-08-14): same ±100bp span at 25bp steps —
+# value is convex in g approaching WACC, so 50bp is coarsest exactly where the
+# grid is most informative. Base case stays the center column.
+G_OFFSETS = (-4, -3, -2, -1, 0, 1, 2, 3, 4)
 
 
 def _stub(vd: date, fy0_end: date) -> float:
@@ -202,7 +206,7 @@ def sensitivity_grids(history: FinancialHistory, assumptions: Assumptions,
     terminal anchor) would print 25 variations of a sign error."""
     g0 = assumptions.eff("terminal_growth")
     waccs = [base_wacc + o * WACC_STEP for o in GRID_OFFSETS]
-    gs = [g0 + o * G_STEP for o in GRID_OFFSETS]
+    gs = [g0 + o * G_STEP for o in G_OFFSETS]
     grids = {}
     if gordon_available:
         grids["wacc_x_g"] = SensitivityGrid(

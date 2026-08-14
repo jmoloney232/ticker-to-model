@@ -38,6 +38,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
 
 from engine.assumptions import SPREAD_TABLE
+from engine.dcf import G_OFFSETS, G_STEP, GRID_OFFSETS, WACC_STEP
 from engine.models import ModelResult
 from engine.presets import Preset
 
@@ -958,17 +959,17 @@ class _Writer:
                     "kept visible on purpose.")
         ws["A1"].font = Font(bold=True)
         ws["A1"].alignment = Alignment(wrap_text=True)
-        offsets = (-2, -1, 0, 1, 2)
+        offsets = GRID_OFFSETS                # WACC rows / multiple cols
         r = 3
 
         if "wacc_x_g" in self.m.sensitivity:
-            self._header(ws, r, "VALUE PER SHARE — WACC × terminal g", span=7)
+            self._header(ws, r, "VALUE PER SHARE — WACC × terminal g", span=10)
             r += 1
             head = r
             ws.cell(row=head, column=1, value="WACC \\ g")
-            for j, off in enumerate(offsets):
+            for j, off in enumerate(G_OFFSETS):
                 c = ws.cell(row=head, column=2 + j,
-                            value=f"=terminal_growth+({off})*0.005")
+                            value=f"=terminal_growth+({off})*{G_STEP}")
                 c.number_format = FMT_PCT
                 c.font = Font(bold=True)
             helper_start = head + 8
@@ -977,10 +978,10 @@ class _Writer:
             for i, off in enumerate(offsets):
                 wr = head + 1 + i
                 wc = ws.cell(row=wr, column=1,
-                             value=f"={V['wacc']}+({off})*0.005")
+                             value=f"={V['wacc']}+({off})*{WACC_STEP}")
                 wc.number_format = FMT_PCT
                 wc.font = Font(bold=True)
-                for j in range(5):
+                for j in range(len(G_OFFSETS)):
                     g = f"{get_column_letter(2 + j)}${head}"
                     w = f"$A{wr}"
                     u = ufcf_rows[j]
@@ -998,7 +999,7 @@ class _Writer:
                     c.number_format = FMT_PS
                     self.map[f"sens:g:{i}:{j}"] = (
                         "Sensitivity", f"{get_column_letter(2 + j)}{wr}")
-            r = helper_start + 5 * 11 + 2
+            r = helper_start + len(G_OFFSETS) * 11 + 2
         else:
             ws.cell(row=r, column=1,
                     value="WACC × g grid unavailable — the Gordon leg has a "
@@ -1020,7 +1021,7 @@ class _Writer:
             for i, off in enumerate(offsets):
                 wr = head + 1 + i
                 wc = ws.cell(row=wr, column=1,
-                             value=f"={V['wacc']}+({off})*0.005")
+                             value=f"={V['wacc']}+({off})*{WACC_STEP}")
                 wc.number_format = FMT_PCT
                 wc.font = Font(bold=True)
                 for j in range(5):
@@ -1042,8 +1043,9 @@ class _Writer:
             ws.cell(row=r, column=1).font = Font(color=RED)
 
     def _g_helpers(self, ws, start: int, head: int) -> tuple[int, list[int]]:
-        """Five labeled re-projection blocks, one per g column. Returns the
-        row of the NOPAT6 cells and the UFCF row per block."""
+        """One labeled re-projection block per g column (len(G_OFFSETS) of
+        them). Returns the row of the NOPAT6 cells and the UFCF row per
+        block."""
         R = self.model_row
         ratio_terms = ["rnd_pct", "sga_pct", "other_opex_pct",
                        "unclassified_costs_pct"]
@@ -1056,7 +1058,7 @@ class _Writer:
                 ).font = Font(color=GRAY, italic=True)
         ufcf_rows: list[int] = []
         n6_row = 0
-        for j in range(5):
+        for j in range(len(G_OFFSETS)):
             base = start + j * 11
             g = f"{get_column_letter(2 + j)}${head}"
             ws.cell(row=base, column=1,
@@ -1115,10 +1117,10 @@ class _Writer:
                               f"-{col}{rows['capex']}-{col}{rows['dnwc']}"
                         ).number_format = FMT_M
             ufcf_rows.append(rows["ufcf"])
-        n6_row = start + 5 * 11
+        n6_row = start + len(G_OFFSETS) * 11
         ws.cell(row=n6_row, column=1,
                 value="NOPAT(N+1) per g column").font = Font(color=GRAY, size=9)
-        for j in range(5):
+        for j in range(len(G_OFFSETS)):
             g = f"{get_column_letter(2 + j)}${head}"
             ufcf_row = ufcf_rows[j]
             ebit5 = f"{self._mcol(self.horizon)}{ufcf_row - 6}"  # ebit row
