@@ -98,3 +98,44 @@ a DCF on unlevered FCF is the wrong machine for the finance arm (interest is its
 *revenue*, debt is its *raw material*). That is a valuation-model decision
 (segment-style split? blended with disclosure?), not a tag problem, and is out of
 scope until segments are.
+
+## 5. Linear growth fade — the cumulative path, not the first year
+
+**What breaks:** nothing mechanically — this is a modeling limitation, documented
+because we know the better answer and scoped it out deliberately. The FY1 revenue
+growth default is capped at 30% (uncapped CAGR displayed alongside), which fixes the
+*starting point* for hypergrowth filers. But the deeper issue is the **cumulative
+five-year path**: a linear fade from a high starting rate spends most of the window
+at elevated growth. A filer entering at the 30% cap fading linearly to 2.5% still
+compounds to roughly +90% total revenue by FY5 — the fade's *shape*, not its
+endpoints, drives the number, and a linear shape is generous to fast growers.
+
+**Why:** linearity was chosen for v1 because it is the simplest fade a reviewer can
+verify by eye in the workbook, and every parameter of it is visible (start, end,
+five steps). The generosity is a property of the shape, not a bug in the
+implementation.
+
+**Fixing it would require:** a curved, front-loaded fade — decay most of the excess
+growth in FY1–FY2 (exponential decay toward terminal g, or a half-life
+parameterization) so cumulative revenue tracks how hypergrowth actually decays.
+Deferred to v1.1: it adds a shape parameter that needs its own derivation rule and
+its own defense, and v1's cap-plus-displayed-CAGR keeps the default honest in the
+meantime. The FY1 cap and the `growth_fade_steep` warning are the v1 mitigations.
+
+## 6. Operating leases held flat in projections (v1.1 candidate)
+
+**What breaks:** nothing mechanically — projected lease ROU and lease liability are
+held at the latest historical value, a disclosed modeling choice (spec 04). For
+lease-heavy filers (DAL, MCD, SBUX — the same names the `lease_heavy` warning
+exists for) this means the lease footprint doesn't grow with revenue: a business
+plan that implies opening stores or adding aircraft carries a fixed lease base.
+
+**Why:** v1 has no defensible history-derived rule for lease growth that doesn't
+also require modeling lease *turnover* (renewals at current rates vs. embedded
+rates), and a flat, labeled line is more honest than a fabricated growth rule.
+
+**Fixing it would require:** projecting lease balances as a percentage of revenue
+(3y average, consistent with the other operating items) and flowing the implied
+lease additions through the cash flow statement. Logged as the **first v1.1
+candidate** — it is chain-of-consequence work (BS, CF, and the lease_heavy
+disclosure all move together), not a one-line change.

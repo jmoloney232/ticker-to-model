@@ -145,12 +145,20 @@ conventions:
     label: Terminal reinvestment consistency
     category: terminal_value
     default: "Reinvestment rate = g ÷ ROIC_t; TV = NOPAT_{N+1} × (1 − g/ROIC_t) ÷ (WACC − g)"
-    derivation: "ROIC_t default = trailing 3y NOPAT ÷ invested capital (gross debt + total equity − cash − ST investments); editable"
+    derivation: >
+      ROIC_t default = trailing 3y mean of marginal-taxed NOPAT ÷ beginning invested
+      capital (gross debt + stockholders equity + NCI + preferred + temporary equity
+      − cash − ST investments); editable. Degenerate history (invested capital ≤ 0,
+      or estimated ROIC ≤ g) falls back to ROIC_t = WACC with a warning stating
+      plainly that terminal reinvestment is value-neutral because returns could not
+      be estimated.
     editable: true
     tradeoff: >
       Growing year-N FCF at g forever implicitly assumes infinite marginal ROIC —
       quietly inflating TV exactly where TV is 75%+ of value. Tying reinvestment to
       g/ROIC makes terminal growth cost what it should. Requires g/ROIC_t < 1 (hard).
+      The WACC fallback (reinvestment earns exactly its cost) adds zero value from
+      growth — the honest neutral stance when the data can't support an estimate.
 
   - id: exit_multiple
     label: Exit multiple terminal value
@@ -220,13 +228,50 @@ conventions:
     category: projections
     default: "Every default derived from the company's own reported history; every one editable"
     derivation: >
-      Revenue growth: 3y CAGR faded linearly to terminal g by FY5. Margins & opex
-      ratios: 3y averages. DSO/DIO/DPO: 3y averages of 365·AR/rev, 365·inv/COGS,
-      365·AP/COGS. Capex: % revenue (3y avg). D&A: % of beginning net PP&E (3y avg;
-      falls back to % revenue if PP&E unmapped). Payout ratio: 3y avg, clamped [0,1].
-      Interest income yield: 3y avg effective yield on cash, clamped [0, rf].
+      Revenue growth: 3y CAGR capped at 30% (uncapped CAGR displayed alongside,
+      clearly labeled; override upward allowed), faded linearly to terminal g by
+      FY5; soft warning above 25%. Margins & opex ratios: 3y averages of per-year
+      ratios, D&A-inclusive as filed. DSO/DIO/DPO: 3y averages of 365·AR/rev,
+      365·inv/COGS, 365·AP/COGS — by-nature filers substitute total operating costs
+      (revenue − EBIT) for COGS, a projection ratio never presented as a comparable
+      DIO/DPO figure. Capex: % revenue (3y avg). D&A: % of beginning net PP&E
+      (3y avg; falls back to % revenue if PP&E unmapped). Payout ratio: 3y avg over
+      positive-NI years, clamped [0,1]. Interest income yield: 3y avg effective
+      yield on beginning cash, clamped [0, rf]. Effective tax: 3y avg excluding
+      loss years, clamped [10%, 35%]. Other non-operating income: projected at zero
+      (one-offs are not run-rate; the historical column shows them).
     editable: true
-    tradeoff: "History-derived defaults are traceable and defensible but assume continuity; the fade to terminal g imposes maturity. Every derivation string is shown next to its input in the UI and workbook."
+    tradeoff: >
+      History-derived defaults are traceable and defensible but assume continuity;
+      the fade to terminal g imposes maturity. The 30% growth cap keeps the default
+      defensible — "the company grew 60%, so we assumed 60%" is not a derivation
+      anyone can stand behind — while the displayed uncapped CAGR keeps it honest.
+      Every derivation string is shown next to its input in the UI and workbook.
+
+  - id: da_placement
+    label: D&A placement in projections
+    category: projections
+    default: "Cost lines projected D&A-inclusive as filed; EBIT = revenue − cost lines; roll-forward D&A is a memo line used only for the CF add-back, the PP&E roll, and EBITDA"
+    derivation: "Filed cost lines already contain D&A (filers embed depreciation in COGS/SG&A and do not split it out); projecting D&A-inclusive ratios plus a separate D&A line would double-count and understate EBIT for every filer"
+    editable: false
+    tradeoff: >
+      All statement identities hold exactly. The disclosed nuance: the D&A embedded
+      in the cost ratios and the memo D&A from the PP&E roll can drift apart in
+      later projection years (memo D&A follows the capex path, embedded D&A follows
+      revenue), so late-year EBITDA margins shift slightly rather than staying pinned.
+
+  - id: unobservable_interest
+    label: Unobservable interest lines
+    category: projections
+    default: "Interest expense zero-logged with material debt: imputed at the synthetic Kd with a warning. Interest income zero-logged: 0% yield with a warning"
+    derivation: "AAPL-shape filers stopped separately disclosing interest lines; the debt is real even when its cost is untagged"
+    editable: true
+    tradeoff: >
+      The asymmetry is deliberate: omit unobservable income, impute unobservable
+      expense — both choices are conservative for the valuation. Projecting $0
+      interest on $90B+ of debt would fabricate pretax income; projecting fabricated
+      interest income on cash would inflate it. Each treatment carries a visible
+      warning, never a silent default.
 
   - id: projection_mechanics
     label: Projection mechanics

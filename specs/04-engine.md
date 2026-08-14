@@ -14,54 +14,94 @@ must agree item-for-item (checked in CI once code exists).
   value = override if present else default. Defaults are computed by
   `derive_assumptions(history, market)` (also pure).
 
-## Assumption defaults and derivation rules
+## Assumption defaults and derivation rules (owner-reviewed 2026-08-13)
 
 All derived from the company's own history; all editable; all shown with their
-derivation text in the UI and workbook.
+derivation text in the UI and workbook. Notation: FY0 = latest historical year,
+n = periods available (3–5); "3y mean" = arithmetic mean of the *per-year* ratio
+over the last min(3, n) fiscal years (per-year then averaged, so a mix-shift year
+stays visible). 53-week years enter averages unadjusted, consistent with ingest's
+annotate-don't-normalize policy (H7 flags them).
 
-| Assumption | Default derivation |
-|---|---|
-| Revenue growth, FY1–FY5 | Trailing 3y revenue CAGR, faded linearly to terminal g by FY5 |
-| Gross margin | 3y average of gross profit / revenue |
-| R&D % of revenue | 3y average (0 if company reports none) |
-| SG&A % of revenue | 3y average |
-| Other operating % of revenue | 3y average of residual operating items |
-| D&A % of beginning net PP&E | 3y average (simplification: total D&A driven off PP&E; disclosed) |
-| Capex % of revenue | 3y average |
-| DSO / DIO / DPO | 3y average of 365·AR/revenue, 365·inventory/COGS, 365·AP/COGS |
-| Other current assets / liabilities % of revenue | 3y average |
-| Deferred revenue % of revenue | 3y average (0 if absent) |
-| Effective tax rate (FY1) | 3y average effective rate, clamped to [10%, 35%] |
-| Marginal tax rate | 25% flat (21% federal + state blend); terminal + Kd rate |
-| Dividend payout ratio | 3y average dividends / net income, clamped to [0, 1] |
-| Interest income yield on cash | 3y average interest income / avg (cash + ST investments), clamped to [0, rf] |
-| Beta | Blume-adjusted from spec 03 (toggle: raw; manual override allowed) |
-| Equity risk premium | 5.0% |
-| Risk-free rate | Spot DGS10 (override for a normalized rate) |
-| Terminal growth g | `max(1.5%, min(2.5%, 10Y yield))` — floor prevents distorted-rate regimes from mechanically crushing valuations |
-| Terminal ROIC (`ROIC_t`) | Trailing 3y ROIC = NOPAT / invested capital (gross debt + total equity − cash − ST investments) |
-| Exit EV/EBITDA multiple | Company's own current EV / trailing EBITDA (labeled: assumes today's multiple persists) |
-| Operating cash floor | 2% of revenue (cash below this is operating, not excess) |
-| Toggles | Mid-year discounting (default on) · SBC add-back (default off = expensed) · Kd method (default synthetic) · beta adjustment (default Blume) |
+**Cost-structure branching (ingest contract):** `by_function` filers carry
+COGS/gross profit; `by_nature` filers (VZ, DAL, MCD, SBUX, DIS) have *no COGS
+concept* — the cost block lives in `other_operating`, so the effective driver is
+the operating margin. Both paths are first-class and both are tested.
+
+**D&A placement (owner decision):** filed cost lines *contain* D&A (filers embed
+depreciation in COGS and SG&A; ingest cannot and does not split it out). Cost
+ratios are therefore measured and projected **D&A-inclusive as filed**, and EBIT =
+revenue − Σ cost lines with **no separate D&A subtraction**. Roll-forward D&A is a
+**memo line** used for exactly three things: the CF add-back, the PP&E roll, and
+EBITDA = EBIT + memo D&A. Every identity holds exactly (P1/P2); the disclosed
+nuance is that embedded-D&A-in-ratios and memo D&A can drift apart in later
+projection years (methodology surface carries this).
+
+| Assumption | Default derivation | Fallback when history is short/missing |
+|---|---|---|
+| Revenue growth FY1 | CAGR `(rev_FY0/rev_FY0−k)^(1/k) − 1`, k = min(3, n−1), **capped at 30% (owner decision)** — the uncapped CAGR is displayed alongside the capped default, clearly labeled, and the user can override upward; soft warning `growth_fade_steep` above 25% | n=3 → 2y CAGR |
+| Revenue growth FY2–FY5 | linear fade `g_i = g_1 + (i−1)/4·(g_term − g_1)`; FY5 growth = terminal g exactly | — (curved fade is a documented v1.1 candidate; see known-limitations) |
+| Gross margin *(by_function only)* | 3y mean gross_profit/revenue (D&A-inclusive as filed) | by_function guarantees COGS in-window (mixed windows classify by_nature) |
+| R&D / SG&A / other operating, each % of revenue | 3y mean of line/revenue for lines present; by_nature filers project whichever lines exist — `other_operating` carries the cost block | zero_logged line → 0% with the inherited warning surfaced |
+| D&A (memo) | rate = 3y mean of `d_and_a_t / ppe_net_{t−1}` (beginning balance) | PP&E unmapped → 3y mean % of revenue (disclosed) |
+| Capex % of revenue | 3y mean | required item — always present |
+| SBC % of revenue | 3y mean | zero_logged → 0% + warning (add-back toggle becomes a no-op; disclosed) |
+| DSO | 3y mean `365·AR_t/revenue_t` | AR zero throughout → 0 |
+| DIO / DPO | by_function: `365·inv_t/COGS_t`, `365·AP_t/COGS_t`. **by_nature: denominator = revenue − operating income** (total operating costs). Safe because the same denominator drives both the historical ratio and the projection — any distortion cancels inside the model. **It is a projection ratio, never presented as a comparable DIO/DPO figure** | inventory absent → DIO 0 |
+| Other current assets / accrued liabilities / other current liabilities / deferred revenue (current), each % of revenue | 3y mean | absent → 0 with inherited warning |
+| Effective tax rate (FY1) | 3y mean of income_tax/pretax **excluding years with pretax ≤ 0**, clamped [10%, 35%] | all in-window years loss-making → marginal from FY1 |
+| Marginal tax rate | 25% flat (21% federal + state blend); terminal NOPAT + after-tax Kd rate | — |
+| Dividend payout ratio | 3y mean dividends/NI over **years with NI > 0**, clamped [0, 1] | no positive-NI years or dividends zero_logged → 0 |
+| Interest expense (P&L) | embedded rate = 3y mean `interest_expense_t / gross_debt_{t−1}` × beginning gross debt | zero_logged with material debt → **imputed at synthetic Kd** + `interest_imputed` warning (see interest asymmetry, methodology) |
+| Interest income yield | 3y mean `interest_income_t / (cash+STI)_{t−1}`, clamped [0, rf] | zero_logged → 0% + warning (asymmetry is deliberate: omit unobservable income, impute unobservable expense — both conservative) |
+| Other non-operating | **projected at 0** (one-offs are not run-rate; historicals still displayed, so the level-break is inspectable). For `ebit_derived` filers it is already inside EBIT ratios — the inherited warning carries the absorbed magnitude | — |
+| Beta | Blume-adjusted 2y weekly from spec 03 (toggle: raw; manual override) | <80 obs → β = 1.0 + loud warning |
+| Equity risk premium | 5.0% | — |
+| Risk-free rate | Spot DGS10 (override for a normalized rate) | cached/snapshot with staleness label |
+| Terminal growth g | `max(1.5%, min(2.5%, 10Y yield))` — floor prevents distorted-rate regimes from mechanically crushing valuations | — |
+| Terminal ROIC (`ROIC_t`) | 3y mean of `EBIT_t(1−marginal) / IC_{t−1}`; IC = gross debt + stockholders equity + NCI + preferred + temporary equity − cash − STI (beginning balance) | IC ≤ 0 years dropped; none usable or ROIC_t ≤ g → **ROIC_t = WACC** + `roic_fallback` warning stating plainly that terminal reinvestment is value-neutral because returns could not be estimated |
+| Exit EV/EBITDA multiple | current EV / FY0 EBITDA; EV = mcap + gross debt − cash − STI (**`investments_combined_unsplit` excluded**, per the ingest owner decision); EBITDA = EBIT + memo-basis D&A | EBITDA ≤ 0 → exit leg marked unavailable (Gordon still runs) |
+| Synthetic-Kd coverage | `(Σ 3y EBIT)/(Σ 3y interest_expense)` — ratio of sums, not mean of ratios (a near-zero interest year would explode a per-year ratio) | interest zero_logged → top coverage bracket, disclosed |
+| Operating cash floor | 2% of revenue (cash below this is operating, not excess) | — |
+| Toggles | Mid-year discounting (default on) · SBC add-back (default off = expensed) · Kd method (default synthetic; embedded toggle falls back to synthetic + warning when interest is zero_logged) · beta adjustment (default Blume) | — |
+
+**Data honesty (ingest contract):** every consumed Fact carries `source`
+(tag / derived / zero_logged). A zero that means "unmapped" must never render the
+same as a zero that means "genuinely zero" — engine output, CLI, and UI all label
+zero_logged inputs and pass the inherited warnings through, including
+`coverage_low` and `immaterial_cash_residual` (mandatory pass-throughs), and the
+`share_count_derived` / `ebit_derived` provenance warnings.
 
 ## Projection mechanics (FY1–FY5)
 
 Three full statements, built so the exported workbook needs **no circular references**:
 
-- **Income statement:** revenue from growth path; COGS/opex from ratio assumptions;
-  D&A = rate × *beginning* net PP&E; **interest expense = embedded historical rate ×
-  beginning gross debt** (debt held constant — see financing policy); **interest income
-  = yield assumption × beginning (cash + ST investments)**; taxes at the effective→
-  marginal fade (linear across FY1–FY5, hitting marginal in the terminal year).
-  Note the deliberate split: projected P&L interest uses the *embedded* rate (cost of
-  the legacy debt actually outstanding); the *WACC* uses the marginal rate (synthetic
-  rating) — different questions, different rates, both documented.
-- **Balance sheet:** AR/inventory/AP from DSO/DIO/DPO; other WC items % of revenue;
-  net PP&E rolls `begin + capex − D&A`; goodwill/intangibles held flat (no acquisitions
-  modeled); debt constant; equity rolls `begin + NI − dividends`; **cash is the plug**
-  (no revolver in v1 — acceptable for the large-cap non-financial universe; a deeply
-  negative cash plug raises a `cash_plug_negative` warning rather than fabricating a
-  revolver).
+- **Income statement:** revenue from growth path; cost lines from ratio assumptions,
+  **D&A-inclusive as filed — EBIT = revenue − Σ cost lines, no separate D&A
+  subtraction** (see D&A placement above; memo D&A = rate × *beginning* net PP&E
+  feeds only CF/BS/EBITDA); other non-operating projected at 0; **interest expense =
+  embedded historical rate × beginning gross debt** (debt held constant — see
+  financing policy; rate imputed at synthetic Kd when interest is zero-logged with
+  material debt); **interest income = yield assumption × beginning (cash + ST
+  investments)**; taxes at the effective→marginal fade (linear across FY1–FY5,
+  hitting marginal in the terminal year). Note the deliberate split: projected P&L
+  interest uses the *embedded* rate (cost of the legacy debt actually outstanding);
+  the *WACC* uses the marginal rate (synthetic rating) — different questions,
+  different rates, both documented.
+- **Balance sheet:** AR/inventory/AP from DSO/DIO/DPO; other current operating items
+  % of revenue; net PP&E rolls `begin + capex − memo D&A`; debt constant; equity
+  rolls `begin + NI − dividends`; **cash is the plug** (no revolver in v1 —
+  acceptable for the large-cap non-financial universe; a deeply negative cash plug
+  raises a `cash_plug_negative` warning rather than fabricating a revolver).
+  **Held-flat lines — a modeling choice with a stated rationale, not an omission
+  (owner decision):** goodwill, intangibles, LT investments, operating-lease ROU and
+  liability, deferred tax liabilities, pension, other noncurrent assets/liabilities,
+  NCI, preferred, temporary equity are all held at FY0. Rationale: none has a
+  defensible history-derived growth rule in v1 (acquisitions aren't modeled,
+  lease-footprint growth is a v1.1 candidate — see known-limitations), and an
+  explicit flat line is inspectable where a silent default is not. **Every
+  balance-sheet line has exactly one documented rule; nothing reaches the cash plug
+  silently** — the plug absorbs only the residual of stated rules.
 - **Financing policy (v1, disclosed):** debt constant, no buybacks, dividends at the
   payout-ratio assumption, share count constant at the current-diluted proxy.
 - **Cash flow statement:** derived indirectly from IS + ΔBS; must tie to Δcash exactly
@@ -168,7 +208,17 @@ Enterprise value      = PV(explicit UFCF) + PV(TV)          [per TV method]
 = Value per share
 ```
 
-Missing optional bridge items are logged, never silently zero. Operating leases stay
+The share proxy consumes ingest's `shares_current` with its provenance chain:
+`dei` cover count → undimensioned `us-gaap:CommonStockSharesOutstanding` (GOOGL) →
+derived latest-FY WA count (META, always with `share_count_derived`). The dilution
+ratio's own components may be NI÷EPS-derived for dual-class filers — the inherited
+warning travels with the per-share output.
+
+Missing optional bridge items are logged, never silently zero, and a `zero_logged`
+component renders as "0 — unmapped (see warning)", never as a bare zero: pension in
+particular is usually unmapped, and "no pension data" must not read as "no pension".
+`investments_combined_unsplit` (NVDA-shape) stays out of the bridge and out of
+current EV, per the ingest owner decision, with its disclosure warning passed through. Operating leases stay
 out of net debt (EBITDA is unadjusted — both sides consistent); when the operating
 lease liability exceeds 25% of gross debt, emit the `lease_heavy` warning (retail /
 restaurant / airline names — COST exercises this).
@@ -205,7 +255,7 @@ validation report (projection invariants).
 |---|---|
 | `InvalidAssumptionError` | g ≥ WACC, RR ≥ 1, negative WACC, out-of-domain override (each names the field and the constraint) |
 | `InsufficientHistoryError` | <3 years reaching the engine (defense in depth; ingest should have caught it) |
-| Warnings (not errors) | terminal-g override past `min(2.5%, 10Y)` · β=1.0 fallback in use · negative UFCF in explicit years · `cash_plug_negative` · `lease_heavy` · TV > 85% of EV (info: "value is mostly terminal") |
+| Warnings (not errors) | terminal-g override past `min(2.5%, 10Y)` · β=1.0 fallback in use · negative UFCF in explicit years · `cash_plug_negative` · `lease_heavy` · `growth_fade_steep` (FY1 default > 25%) · `interest_imputed` · `roic_fallback` (value-neutral terminal reinvestment) · TV > 85% of EV (info: "value is mostly terminal") · **all inherited ingest warnings pass through verbatim** (`coverage_low` and `immaterial_cash_residual` are mandatory in every output surface) |
 
 ## How tested
 
@@ -216,9 +266,13 @@ validation report (projection invariants).
   decreasing in WACC and increasing in g · mid-year on/off differ by exactly
   (1+WACC)^0.5 on the explicit-period PVs when the stub is zero · sensitivity center
   cell equals base case.
-- **Golden fixtures:** full ModelResult snapshots for MSFT/KO/COST/KHC from committed
-  history + market fixtures; any change to outputs must be an intentional snapshot
-  update with a review note.
+- **Golden fixtures:** full ModelResult snapshots from committed history + market
+  fixtures — MSFT first (the phase 2 deliverable), KO/COST/KHC added with the Excel
+  phase; any change to outputs must be an intentional snapshot update with a review
+  note.
+- **Sanity check:** implied equity value within a plausible band of observed market
+  cap for a mature fixture filer — not because the market is right, but because a
+  value 10× off is a bug, not an insight.
 - **Invariant tests:** P1–P4 asserted across all fixtures and randomized assumption
   overrides (hypothesis-style fuzzing within valid domains).
 - **Excel parity:** spec 05's harness recalculates the workbook and diffs every output

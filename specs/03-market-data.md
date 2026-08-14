@@ -15,7 +15,7 @@ the in-house beta computation. Knows nothing about EDGAR or valuation.
 `MarketInputs` for a company:
 
 - `price`: latest close (split-adjusted), with `as_of` date and `staleness` tier
-  (live / cached / snapshot)
+  (`live` / `cache` / `stale_cache` / `snapshot` — same `Tier` literal ingest uses)
 - `beta`: raw OLS beta, Blume-adjusted beta, regression metadata (n_obs, window,
   frequency, benchmark, R²)
 - `risk_free`: 10Y Treasury yield (decimal), `as_of` date, staleness tier
@@ -36,10 +36,12 @@ only; it never sees a vendor name.
 
 ## Beta computation (owner-reviewed convention)
 
-- **Window/frequency: 2 years of weekly returns** vs **SPY**. Weekly avoids the
-  non-synchronous-trading bias that pulls daily betas toward zero below mega-cap
-  liquidity; 2y keeps recency. (Bloomberg default is 2y weekly; Damodaran uses 5y
-  monthly.)
+- **Window/frequency: 2 years of weekly returns** vs **SPY** (owner re-confirmed
+  2026-08-13 against a 3y-daily alternative). Weekly avoids the non-synchronous-
+  trading bias that pulls daily betas toward zero below mega-cap liquidity
+  (Scholes–Williams 1977, Dimson 1979); 2y keeps recency. Directly citable:
+  Bloomberg's terminal default is 2y weekly with the same ⅔/⅓ adjustment;
+  Damodaran uses 5y monthly, Value Line 5y weekly.
 - Weekly return = simple return between last trading closes of consecutive weeks
   (ISO weeks; both series sampled on the same dates — intersection of trading days).
 - OLS slope of stock weekly returns on SPY weekly returns. Target ~104 paired
@@ -65,7 +67,7 @@ only; it never sees a vendor name.
 |---|---|
 | Alpaca down, cache warm | Cached price/bars with staleness label |
 | Alpaca down, cold, snapshot exists | Snapshot with "as of {date}" label |
-| Alpaca down, cold, no snapshot | `MarketDataUnavailable`: app still shows historicals + assumptions; DCF marked unavailable-with-reason (spec 00 partial state) |
+| Alpaca down, cold, no snapshot | `MarketDataUnavailableError`: app still shows historicals + assumptions; DCF marked unavailable-with-reason (spec 00 partial state) |
 | FRED down | Cached/snapshot DGS10 with staleness label (rf moves slowly; stale is fine, labeled) |
 | Split detected mid-cache | Bars are always re-requested split-adjusted; cache invalidated on adjustment mismatch (see tests) |
 
@@ -83,8 +85,8 @@ only; it never sees a vendor name.
 | Error | Trigger | Behavior |
 |---|---|---|
 | `InsufficientPriceHistoryError` | <80 paired weekly obs | Beta unavailable → engine falls back to β=1.0 with a loud warning ("market-average beta assumed"), user-overridable |
-| `MarketDataUnavailable` | All tiers exhausted for a required field | Partial state per spec 00 |
-| `BenchmarkUnavailable` | SPY series unavailable in all tiers | Same as above (beta needs the benchmark) |
+| `MarketDataUnavailableError` | All tiers exhausted for a required field | Partial state per spec 00 |
+| `BenchmarkUnavailableError` | SPY series unavailable in all tiers | Beta falls back to 1.0 with a `benchmark_unavailable` warning — beta is the one market input with a documented fallback, so a missing benchmark degrades like short history instead of blocking the DCF |
 
 ## How tested
 

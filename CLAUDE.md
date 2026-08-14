@@ -39,7 +39,7 @@ Build and verify each phase before starting the next.
 |---|---|---|
 | 0 | Specs, schema, methodology | done (owner-reviewed) |
 | 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done — 130 tests, 9 real-filing fixtures; final scan: 23/27 non-financials build, DE coverage-refused, GE spin-year isolated, XOM+NEE honestly rejected; limitations in docs/known-limitations.md** |
-| 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | not started |
+| 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | **in progress — derivation rules owner-approved (incl. 30% growth cap, D&A memo placement, interest asymmetry); market module built, 21 tests (awaiting owner review); engine + CLI next** |
 | 3 | `backend/excel/` — formula-driven workbook | not started |
 | 4 | `backend/app/` + `frontend/` — API, dashboard, download | not started |
 
@@ -135,7 +135,20 @@ deliberately; never let them drift silently.**
   a hard, non-dismissible `coverage_low` warning (NVDA).
 - **Known-limitations doc:** `docs/known-limitations.md` — what breaks, why, and
   what fixing it would require (GE spin year, extension-tag filers, MCD lessee
-  leases, captive finance). Deliberate asset, kept current.
+  leases, captive finance, linear-fade cumulative path, flat leases). Deliberate
+  asset, kept current.
+- **D&A placement (owner decision):** cost lines projected D&A-inclusive as filed
+  (EBIT = revenue − cost lines, no separate subtraction); roll D&A is a memo line
+  for CF/BS/EBITDA only — separate-line projection would double-count D&A.
+- **Growth default cap (owner decision):** FY1 revenue growth = 3y CAGR capped at
+  30%, uncapped CAGR displayed alongside; soft warning above 25%.
+- **Unobservable interest (owner decision):** zero-logged interest expense with
+  material debt is imputed at synthetic Kd (warned); zero-logged interest income
+  stays 0 (warned) — omit unobservable income, impute unobservable expense.
+- **Beta re-confirmed (owner, 2026-08-13):** 2y weekly vs SPY, Blume-adjusted —
+  Bloomberg's default, citable; chosen over 3y daily (non-synchronous-trading bias).
+- **Held-flat noncurrent lines (owner decision):** every BS line has exactly one
+  documented projection rule; nothing reaches the cash plug silently.
 
 ## Scope guardrails (v1)
 
