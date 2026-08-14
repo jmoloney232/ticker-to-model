@@ -35,7 +35,9 @@ from .models import (
 from .projections import project, tax_path
 from .wacc import build_wacc
 
-TV_SHARE_INFO = 0.85          # P8: value is mostly terminal
+TV_SHARE_INFO = 0.80          # P8 — published guidance: typical TV is 60–80%
+                              # of EV; above 80% the valuation is a bet on
+                              # long-run assumptions (audit task 4)
 LEASE_HEAVY = 0.25            # P6: operating leases vs gross debt
 UNCLASSIFIED_WARN = 0.01      # same leg as H2's revenue-materiality (owner-approved)
 WACC_STEP, G_STEP, MULT_STEP = 0.005, 0.0025, 1.0
@@ -310,8 +312,14 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
                     detail=("Gordon leg unavailable (negative terminal anchor) — "
                             "terminal-value share not computable" if tv_share is None
                             else f"Terminal value = {tv_share:.0%} of enterprise value"
-                            + (" — value is mostly terminal; the explicit forecast "
-                               "barely matters" if tv_share > TV_SHARE_INFO else ""))),
+                            + ((" — above the 80% line, the valuation is a bet on "
+                                "long-run assumptions rather than near-term "
+                                "fundamentals. The remedy is a longer explicit "
+                                "forecast horizon for this business; note a 5-year "
+                                "horizon mechanically produces a higher TV share "
+                                "than a 10-year one, so this firing often at the "
+                                "current horizon is the signal working, not noise.")
+                               if tv_share > TV_SHARE_INFO else ""))),
     ])
 
 

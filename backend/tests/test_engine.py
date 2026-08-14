@@ -334,6 +334,18 @@ class TestTerminalGrowthChecks:
         assert "terminal_growth_rf_ceiling" in DISPLAY_ONLY
 
 
+class TestTerminalValueShare:
+    def test_p8_fires_at_the_published_80_line_with_remedy(self):
+        # 80.3% TV share — inside the band the old 85% threshold missed
+        m = toy_model(overrides={"terminal_growth": 0.03})
+        p8 = m.checks.result("P8")
+        assert p8.status == "warn"
+        assert "longer explicit forecast horizon" in p8.detail
+        assert "signal working" in p8.detail
+        # the toy base case (78.5%) stays under the line
+        assert toy_model().checks.result("P8").status == "pass"
+
+
 class TestRatingBrackets:
     """The audit's headline bug: the old table truncated the distressed range
     at 'coverage > 0 → 4%', charging 0.5x-coverage filers a 4% spread where
