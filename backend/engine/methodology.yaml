@@ -406,6 +406,26 @@ conventions:
       interest income on cash would inflate it. Each treatment carries a visible
       warning, never a silent default.
 
+  - id: forecast_horizon
+    label: Explicit forecast horizon
+    category: projections
+    default: "5 years (selectable: 5, 7, or 10)"
+    derivation: >
+      Every fade (revenue growth to terminal g, effective to marginal tax) reaches
+      its terminal level in the final forecast year; discount exponents, terminal
+      values, and both sensitivity grids re-compute at the selected horizon. The
+      exported workbook is laid out at the model's horizon — the forecast_years
+      cell in the sheet is structural, so the horizon changes in the app, not in
+      the workbook.
+    editable: true
+    tradeoff: >
+      Koller et al. recommend extending the explicit forecast until the company
+      actually reaches steady state — a fixed 5 years forces every business to
+      mature by FY5 and mechanically raises the terminal-value share (P8). But a
+      mechanically extrapolated linear fade over 10–15 years with no analyst
+      judgment can be worse than a short horizon, so 5 stays the default and the
+      UI does not recommend longer.
+
   - id: projection_mechanics
     label: Projection mechanics
     category: projections

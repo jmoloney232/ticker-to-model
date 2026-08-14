@@ -1,4 +1,4 @@
-"""Three-statement projections FY1–FY5 (specs/04-engine.md, mechanics).
+"""Three-statement projections FY1–FYn, n ∈ {5, 7, 10} (specs/04-engine.md).
 
 Built so the exported workbook needs no circular references: interest on
 BEGINNING-of-period balances, cash is the plug. Cost lines are D&A-inclusive
@@ -18,7 +18,8 @@ from ingest.models import FinancialHistory, FiscalPeriod
 from .assumptions import gross_debt
 from .models import Assumptions, ProjectedPeriod
 
-HORIZON = 5
+# Horizon comes from the forecast_years assumption ({5, 7, 10}, default 5 —
+# audit task 7); every fade reaches its terminal level in the final year.
 
 # Noncurrent non-debt lines held flat at FY0 (owner decision, spec 04): no
 # defensible history-derived growth rule exists for these in v1, and an
@@ -32,18 +33,24 @@ FLAT_BALANCE_ITEMS = (
 )
 
 
+def horizon(assumptions: Assumptions) -> int:
+    return int(assumptions.eff("forecast_years"))
+
+
 def growth_path(assumptions: Assumptions) -> list[float]:
-    """Linear fade from FY1 growth to terminal g by FY5 (curved fade is a
-    documented v1.1 candidate)."""
+    """Linear fade from FY1 growth to terminal g by the final forecast year
+    (curved fade is a documented v1.1 candidate)."""
     g1 = assumptions.eff("revenue_growth_fy1")
     gt = assumptions.eff("terminal_growth")
-    return [g1 + i / (HORIZON - 1) * (gt - g1) for i in range(HORIZON)]
+    n = horizon(assumptions)
+    return [g1 + i / (n - 1) * (gt - g1) for i in range(n)]
 
 
 def tax_path(assumptions: Assumptions) -> list[float]:
     eff = assumptions.eff("effective_tax_fy1")
     marginal = assumptions.eff("marginal_tax")
-    return [eff + i / (HORIZON - 1) * (marginal - eff) for i in range(HORIZON)]
+    n = horizon(assumptions)
+    return [eff + i / (n - 1) * (marginal - eff) for i in range(n)]
 
 
 def _flat(fy0: FiscalPeriod, item: str) -> float:
@@ -78,7 +85,7 @@ def project(history: FinancialHistory, assumptions: Assumptions
         _enumerated_liabilities(fy0) + _enumerated_equity(fy0)
         - _enumerated_assets_ex_cash(fy0))
 
-    for i in range(HORIZON):
+    for i in range(horizon(a)):
         fy = fy0.fiscal_year + i + 1
         fye = fy0.end + timedelta(days=round(365.25 * (i + 1)))
         rev = prev_rev * (1 + growth[i])

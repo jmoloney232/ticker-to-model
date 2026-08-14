@@ -267,6 +267,17 @@ class TestLiveness:
         assert got > m.bridges["gordon"].value_per_share
         assert close(got, expected)
 
+    def test_seven_year_workbook_round_trips(self, tmp_path):
+        # audit task 7: the sheet is laid out at the model's horizon; a 7-year
+        # MSFT workbook must recalculate to the 7-year engine, cell for cell
+        m0 = build("MSFT", msft_market_provider())
+        m = build_model(m0.history, m0.market, valuation_date=GOLDEN_VD,
+                        overrides={"forecast_years": 7})
+        path = tmp_path / "msft7.xlsx"
+        cmap = write_workbook(m, path)
+        wb = recalc(path)
+        assert_roundtrip(m, cmap, wb)
+
     def test_terminal_roic_fade_toggle_is_live(self, tmp_path):
         # audit task 6: the fade toggle must move the sheet exactly as the
         # engine says — ROIC_t to the midpoint with WACC, value down

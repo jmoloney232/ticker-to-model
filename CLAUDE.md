@@ -167,7 +167,8 @@ deliberately; never let them drift silently.**
 
 ## Scope guardrails (v1)
 
-Large US non-financial companies, annual periods, 5-year forecast. Banks, insurers,
+Large US non-financial companies, annual periods, 5-year default forecast
+(selectable 5/7/10 — owner decision, audit round 2026-08-14). Banks, insurers,
 REITs: detect by SIC code and reject with a clear message — never produce garbage. Out
 of scope (architect for, don't build): segments, footnotes, MD&A, quarterly data, comps,
 LBO. Fixture tickers: MSFT (clean, June FYE), KO (clean, calendar FYE), COST (52/53-week

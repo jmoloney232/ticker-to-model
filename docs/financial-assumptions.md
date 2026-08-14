@@ -30,7 +30,11 @@ There is no fifth place a number can come from.
 the *per-year* ratio over the last min(3, available) fiscal years — computed per year
 and then averaged, so a mix-shift year stays visible rather than being blended away.
 53-week fiscal years enter these means unadjusted (they are detected and annotated —
-see §1). The forecast horizon is 5 years.
+see §1). The explicit forecast horizon is **5 years by default, selectable to 7 or
+10** (`forecast_years`); every fade reaches its terminal level in the final year,
+and "FY5" below reads as "the final forecast year" at longer horizons. Longer
+horizons are a choice, never a recommendation — a mechanically extrapolated linear
+fade over 10–15 years with no analyst judgment can be worse than a short horizon.
 
 ---
 

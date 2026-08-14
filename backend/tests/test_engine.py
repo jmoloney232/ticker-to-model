@@ -334,6 +334,54 @@ class TestTerminalGrowthChecks:
         assert "terminal_growth_rf_ceiling" in DISPLAY_ONLY
 
 
+class TestForecastHorizon:
+    """Audit task 7: horizon {5, 7, 10}, default 5; every fade and exponent
+    follows the selected horizon."""
+
+    def test_default_is_five_and_golden_shape_unchanged(self):
+        m = toy_model()
+        assert m.assumptions.eff("forecast_years") == 5
+        assert len(m.projections) == 5
+
+    def test_seven_year_model_ties_and_fades_to_terminal(self):
+        m = toy_model(overrides={"forecast_years": 7})
+        assert len(m.projections) == 7          # P1/P2 asserted inside project
+        g_last = (m.projections[-1].income["revenue"]
+                  / m.projections[-2].income["revenue"] - 1)
+        assert g_last == pytest.approx(m.assumptions.eff("terminal_growth"))
+        assert m.ufcf[-1].tax_rate == pytest.approx(
+            m.assumptions.eff("marginal_tax"))
+        # discount exponent of the final year reaches 7 − stub − mid-year
+        assert m.ufcf[-1].exponent == pytest.approx(7 - 0.5)
+
+    def test_ten_year_terminal_discounts_at_ten(self):
+        m = toy_model(overrides={"forecast_years": 10, "midyear": False})
+        assert m.terminal["gordon"].exponent == pytest.approx(10)
+        assert m.terminal["exit_multiple"].exponent == pytest.approx(10)
+
+    def test_longer_horizon_lowers_tv_share(self):
+        # the audit's point about P8: a 5-year horizon mechanically produces
+        # a higher TV share than a 10-year one
+        share = {}
+        for n in (5, 10):
+            m = toy_model(overrides={"forecast_years": n})
+            share[n] = (m.terminal["gordon"].pv
+                        / m.bridges["gordon"].enterprise_value)
+        assert share[10] < share[5]
+
+    def test_sensitivity_reprojects_at_the_selected_horizon(self):
+        m = toy_model(overrides={"forecast_years": 7})
+        grid = m.sensitivity["wacc_x_g"]
+        center = grid.cells[len(grid.rows) // 2][len(grid.cols) // 2]
+        assert center == pytest.approx(m.bridges["gordon"].value_per_share,
+                                       rel=1e-12)
+
+    def test_domain_rejects_unsupported_horizons(self):
+        for bad in (6, 8, 4, 15):
+            with pytest.raises(InvalidAssumptionError):
+                toy_model(overrides={"forecast_years": bad})
+
+
 class TestTerminalRoicFade:
     """Audit task 6: the excess-return-decay view as an option, never the
     silent default; persistence flagged either way."""

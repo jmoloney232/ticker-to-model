@@ -286,6 +286,17 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
     add("cash_floor_pct", CASH_FLOOR_PCT,
         "Operating-cash floor: cash below 2% of revenue is operating, not excess")
 
+    # ── horizon ────────────────────────────────────────────────────────────
+    add("forecast_years", 5,
+        "Explicit forecast horizon — 5 (default), 7, or 10 years. Koller et "
+        "al. recommend extending until steady state, but a mechanically "
+        "extrapolated linear fade over 10–15 years can be worse than a short "
+        "horizon, so 5 stays the default and longer is a choice, never a "
+        "recommendation. All fades (growth, tax) reach their terminal levels "
+        "in the final year. Structural in the exported workbook: the sheet is "
+        "laid out at this horizon — change it in the app and re-download, "
+        "not in the workbook cell", unit="years")
+
     # ── toggles ────────────────────────────────────────────────────────────
     add("midyear", True, "Mid-year discounting (Gordon TV at N−0.5; exit TV at N "
                          "— deliberate asymmetry)", unit="flag")
@@ -360,15 +371,36 @@ _DOMAINS: dict[str, tuple[float, float, str]] = {
     "cash_floor_pct": (0.0, 0.25, "cash floor within [0%, 25%]"),
 }
 
+# Discrete domains: structural inputs where only named values are coherent
+# (a 6-year fade is expressible but the workbook layout, docs, and tests
+# commit to the supported set).
+_DISCRETE_DOMAINS: dict[str, tuple[frozenset, str]] = {
+    "forecast_years": (frozenset({5, 7, 10}),
+                       "forecast horizon must be 5, 7, or 10 years"),
+}
+
+
+def check_domain(name: str, value) -> None:
+    """Shared by user overrides and preset values — one validation, no
+    second, laxer path."""
+    if isinstance(value, bool):
+        return
+    if name in _DISCRETE_DOMAINS:
+        allowed, label = _DISCRETE_DOMAINS[name]
+        if float(value) not in allowed:
+            raise InvalidAssumptionError(name, label, value)
+        return
+    if name in _DOMAINS:
+        lo, hi, label = _DOMAINS[name]
+        if not (lo <= float(value) <= hi):
+            raise InvalidAssumptionError(name, label, value)
+
 
 def apply_overrides(assumptions: Assumptions, overrides: dict[str, float | bool]
                     ) -> Assumptions:
     for name, value in overrides.items():
         if name not in assumptions.fields:
             raise InvalidAssumptionError(name, "not an assumption field", value)
-        if name in _DOMAINS and not isinstance(value, bool):
-            lo, hi, label = _DOMAINS[name]
-            if not (lo <= float(value) <= hi):
-                raise InvalidAssumptionError(name, label, value)
+        check_domain(name, value)
         assumptions.fields[name].override = value
     return assumptions

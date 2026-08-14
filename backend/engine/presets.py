@@ -39,7 +39,7 @@ import yaml
 from ingest.models import FinancialHistory
 from market.models import MarketInputs
 
-from .assumptions import _DOMAINS, _identity_gap, _pct_of_revenue, _window
+from .assumptions import _identity_gap, _pct_of_revenue, _window, check_domain
 from .errors import InvalidAssumptionError, PresetUnavailableError
 from .models import Assumptions
 
@@ -257,11 +257,12 @@ def apply_preset(assumptions: Assumptions, preset: Preset,
                     f"(target price {r.target_price:,.2f})")
             value = r.implied
             note = f"solved: Gordon leg = market price {r.target_price:,.2f}"
-        if fname in _DOMAINS and not isinstance(value, bool):
-            lo, hi, label = _DOMAINS[fname]
-            if not (lo <= float(value) <= hi):
-                raise InvalidAssumptionError(
-                    fname, f"{label} (requested by preset {preset.name!r})", value)
+        try:
+            check_domain(fname, value)     # same validation as user overrides
+        except InvalidAssumptionError as exc:
+            raise InvalidAssumptionError(
+                fname, f"{exc.detail['constraint']} (requested by preset "
+                       f"{preset.name!r})", value) from exc
         f = assumptions.fields[fname]
         f.preset_value = value
         f.preset_name = preset.name
