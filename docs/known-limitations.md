@@ -180,3 +180,19 @@ unreliable).
 staleness/provenance treatment, a documented mapping from rating to spread
 (same published table), and precedence rules (actual rating wins; synthetic
 stays as the fallback and the cross-check). Tractable v2 item.
+
+## 9. Book-value debt in the WACC weights (v2)
+
+**What:** the WACC weights use gross *book* debt; the textbook rule is
+market-value weights. Book is a pragmatic approximation — reasonable for
+investment-grade names, weaker for distressed issuers or long-duration debt
+after a large rate move.
+
+**Why:** market values of debt need bond prices (a data source v1 doesn't
+have) or an estimate.
+
+**Fixing it would require:** a coupon-bond approximation — the engine already
+carries the embedded rate (coupon proxy), the synthetic Kd (discount rate),
+and book face value, so pricing the debt as a single coupon bond of the
+average maturity is tractable with one new input (average maturity, from the
+debt footnote or a stated default). Queued as a v2 item.

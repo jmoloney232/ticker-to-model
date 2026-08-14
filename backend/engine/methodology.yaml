@@ -46,9 +46,12 @@ conventions:
     editable: true
     tradeoff: >
       Off matches textbooks; on matches practitioner models (cash arrives through the
-      year, not on Dec 31). Worth ~2–4% of value. The TV treatment is deliberately
-      asymmetric: Gordon TV shifts with mid-year (perpetual flows), exit-multiple TV
-      does not (a sale is a year-end point event). Unit-tested.
+      year, not on Dec 31). Worth roughly 3–5% of value, larger at higher discount
+      rates. The TV treatment is deliberately asymmetric: Gordon TV shifts with
+      mid-year (perpetual flows), exit-multiple TV does not (a sale is a year-end
+      point event). Practice varies — applying mid-year to both legs is also seen,
+      and no authoritative source settles the asymmetry itself; the unit test pins
+      the engine's chosen behavior.
 
   - id: valuation_date
     label: Valuation date & stub period
@@ -148,8 +151,12 @@ conventions:
     editable: false
     tradeoff: >
       Gross debt in the WACC weights; NET debt appears only in the EV→equity bridge.
-      Using net in both is the single most common WACC error — this placement is a
-      tested engine invariant (P3), not a convention users can break.
+      The field is split — net-debt weights are common on the sell side and are
+      internally consistent when applied consistently; the engine has CHOSEN gross
+      for consistency with its bridge. The real error is inconsistency between the
+      weights and the bridge, and that consistency is the tested invariant (P3).
+      Book debt is a pragmatic approximation of the textbook market-value weights
+      (market-value-of-debt via coupon-bond approximation is a v2 item).
 
   - id: tax_rate
     label: Tax rate policy

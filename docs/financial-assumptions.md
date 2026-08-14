@@ -270,6 +270,8 @@ UFCF = EBIT × (1 − tax_t) + D&A [+ SBC if toggled] − capex − ΔNWC
 
 - `tax_t` is the fading tax path (§2.5), applied to EBIT — unlevered FCF pairs with
   WACC; the P&L's interest lines affect net income and the cash plug but never UFCF.
+  Mid-year discounting (below) is worth roughly **3–5% of value, larger at higher
+  discount rates**.
 - **SBC is expensed by default — not added back.** Street practice adds it back
   (higher FCF); treating it as a real expense (the Damodaran position) is
   conservative and honest about dilution. Expect values to read *low* versus typical
@@ -279,8 +281,8 @@ UFCF = EBIT × (1 − tax_t) + D&A [+ SBC if toggled] − capex − ΔNWC
 **Discounting.** The valuation date is an explicit input (never `TODAY()` in the
 workbook). With `stub` = elapsed fraction of a year since FYE0, the FY_i cash flow
 discounts at exponent `t_i = i − stub − 0.5·midyear`. Mid-year discounting (default
-on, worth ~2–4% of value) reflects cash arriving through the year rather than on the
-last day. When the valuation date equals FYE0 and mid-year is off, the model
+on, worth roughly 3–5% of value — the figure scales with the discount rate)
+reflects cash arriving through the year rather than on the last day. When the valuation date equals FYE0 and mid-year is off, the model
 reproduces the textbook year-end DCF exactly — a tested invariant. A valuation date
 more than a year past FYE0 draws a `history_stale` warning instead of silently
 producing stale numbers.
@@ -336,11 +338,17 @@ WACC = We × Ke + Wd × Kd × (1 − marginal tax)
   The embedded rate remains available as a toggle (and silently falls back to
   synthetic, disclosed, when no coupon is observable).
 - **Weights: equity at market cap** (price × the §7.2 share proxy), **debt at gross
-  book value** including finance leases. Book debt is the standard proxy for
-  investment-grade names when bond prices aren't available. **Net debt appears only
-  in the EV→equity bridge — never in the weights.** Using net in both is the single
-  most common WACC error; here it is a *tested structural invariant* (P3), not a
-  convention a user can break.
+  book value** including finance leases. On book debt: the *textbook* rule is
+  market-value weights; book debt is a pragmatic approximation (reasonable for
+  investment-grade names, weaker for distressed or long-duration debt in a moved
+  rate environment). A market-value-of-debt estimate via coupon-bond approximation
+  is a tractable v2 item (known-limitations) — the engine already has Kd and
+  interest expense. On gross vs net: **the field is genuinely split.** Net-debt
+  weights are common on the sell side and are internally consistent if applied
+  consistently; the engine has *chosen* gross debt in the weights, with net debt
+  appearing only in the EV→equity bridge, because the real error is
+  *inconsistency between the weights and the bridge* — and that consistency is
+  what P3 tests as a structural invariant.
 - The after-tax Kd uses the same `marginal_tax` field as terminal NOPAT — asserted
   in code (§2.5).
 
@@ -387,8 +395,10 @@ TV = exit_multiple × EBITDA_FY5        (EBITDA = EBIT + memo D&A)
 The default multiple is the company's **own current EV/EBITDA** (§2.8) — comps are
 out of scope in v1, and importing a hand-picked peer multiple would smuggle in an
 undocumented assumption. Discounting: at **full `t_N` regardless of the mid-year
-toggle** — a sale is a point-in-time, year-end event, not a flow. This asymmetry
-with the Gordon leg is deliberate and unit-tested.
+toggle** — the reasoning is that a sale is a point-in-time, year-end event, not a
+flow. This asymmetry with the Gordon leg is deliberate; **practice varies**, and
+applying mid-year discounting to both legs is also seen — no authoritative source
+settles the asymmetry itself. The unit test pins the engine's chosen behavior.
 
 ### 6.3 The cross-check that disciplines both
 
@@ -550,3 +560,20 @@ this order:
 Everything in this list is visible in the product — as a warning, a check, a
 derivation string, or an unavailable state. The model's core commitment is that
 nothing on it is silent.
+
+---
+
+## 12. Where we deviate from published convention, and why
+
+Each row is a deliberate choice, not an oversight; the product surfaces every one
+(provenance strings, presets, flags, or toggles).
+
+| Topic | Published position | Engine position | Why |
+|---|---|---|---|
+| Terminal growth cap | g ≤ risk-free rate (Damodaran — the rf embeds the same long-run growth/inflation assumptions as the cash flows) | `max(1.5%, min(2.5%, 10Y))` house cap | Conservatism, plus a floor against distorted-rate regimes. The rf ceiling is displayed beside the default; P5 polices the published rule, an info flag marks the band between |
+| ERP / risk-free pairing | Matched packages: Damodaran implied 4.23% + spot 10Y; Kroll 5.0% + max(normalized 3.5%, spot 20Y) (both Jan 2026) | 5.0% + spot 10Y — a house combination | Kroll's level with Damodaran's rf convention; named as a mix, and the `damodaran_implied` preset applies the pure published package |
+| SBC in FCF | Street practice adds SBC back to FCF | Expensed — no add-back (toggle) | Honest about dilution; conservative. Expect lower values than street DCFs for heavy-SBC names |
+| Operating leases | Lease-adjusted debt *and* EBITDA is common practice post-ASC 842 | Excluded from both debt and EBITDA | Internal consistency without lease-adjusting every ratio in v1; P6 warns loudly when the liability exceeds 25% of gross debt and the choice materially binds |
+| Cost-of-debt source | Actual agency ratings price the debt of rated issuers; synthetic rating is the fallback for unrated firms | Synthetic rating for every filer | Agency ratings aren't in EDGAR; ingest is a named v2 item, and the derivation string discloses the method's intended scope |
+| Terminal ROIC | Excess returns decay toward zero at stable growth; ROC → cost of capital (Damodaran) | 3y historical ROIC held in perpetuity (toggle: midpoint fade to WACC) | Durable-moat wiggle room from the same author's Little Book; the persistence is flagged (>10pp spread → info flag) and the decay view is one toggle away |
+| Exit-leg discounting | No settled convention found for the mid-year treatment of an exit TV | Full `t_N` regardless of the mid-year toggle | A sale reads as a year-end point event; practice varies and mid-year on both legs is also seen — pinned by a unit test either way |
