@@ -94,6 +94,30 @@ presets:
         form: rule
         rule: "marginal_tax"
 
+  - name: damodaran_implied
+    title: Damodaran implied ERP
+    builtin: true
+    rationale: >-
+      The Damodaran cost-of-equity package as published, not mixed: implied US
+      ERP 4.23% (January 2026), which is computed against — and only valid
+      paired with — the spot 10Y the engine already uses; terminal growth at
+      min(nominal-GDP proxy, 10Y) per the same framework. The derived
+      default's 5.0% ERP on a spot 10Y is a house combination neither
+      Damodaran nor Kroll publishes.
+    fields:
+      erp:
+        form: literal
+        value: 0.0423
+        note: >-
+          Damodaran implied US equity risk premium, January 2026 — published
+          paired with the spot 10Y Treasury (the engine's risk_free default)
+      terminal_growth:
+        # nominal_gdp_proxy is an editable constant (methodology.yaml:
+        # nominal_gdp_proxy; engine/presets.py NOMINAL_GDP_PROXY, parity-
+        # tested). The 10Y cap keeps the published g ≤ rf constraint.
+        form: rule
+        rule: "min(nominal_gdp_proxy, risk_free)"
+
   - name: downside
     title: Downside (history-anchored)
     builtin: true

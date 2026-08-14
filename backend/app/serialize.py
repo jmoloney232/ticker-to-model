@@ -203,7 +203,8 @@ def serialize_preset(p: Preset) -> dict:
         "builtin": p.builtin, "applicability": dict(p.applicability),
         "fields": [{"field": f.name, "form": f.form, "rule": f.rule,
                     "value": f.value, "solver": f.solver, "target": f.target,
-                    "optional": f.optional} for f in p.fields.values()],
+                    "optional": f.optional, "note": f.note}
+                   for f in p.fields.values()],
     }
 
 

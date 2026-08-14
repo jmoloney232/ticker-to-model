@@ -70,10 +70,22 @@ conventions:
   - id: equity_risk_premium
     label: Equity risk premium
     category: wacc
-    default: "5.0%"
-    derivation: "Fixed default; no observable 'true' value exists"
+    default: "5.0%, paired with the spot 10Y — a deliberate house combination"
+    derivation: >
+      The published packages are matched ERP/risk-free PAIRS: Damodaran implied US
+      ERP 4.23% (January 2026) paired with the spot 10Y; Kroll recommended US ERP
+      5.0% (reaffirmed 2026-01-30) paired with the higher of a normalized 3.5% or
+      the spot 20Y. The engine's default combines Kroll's ERP level with
+      Damodaran's risk-free convention — defensible, but a third combination
+      neither source publishes, and named as such. The damodaran_implied preset
+      applies the Damodaran package as published.
     editable: true
-    tradeoff: "4.5–6.0% are all defensible (Damodaran implied ~4.5–5.5%; long-run historical ~6%+). 5.0% sits mid-range."
+    tradeoff: >
+      Mixing levels across packages moves the cost of equity: Damodaran's package
+      gives a lower Ke than the house default in the current rate environment.
+      No observable 'true' ERP exists; what the engine owes the user is naming
+      which published package (or house combination) is in force — which the
+      preset provenance does.
 
   - id: beta
     label: Beta
@@ -207,6 +219,23 @@ conventions:
     editable: false
     tradeoff: "Value is convex in g as it approaches WACC, so 50 bp g-steps are coarsest exactly where the grid is most informative; 25 bp is the common practitioner convention. The span stays a symmetric ±100 bp (owner decision 2026-08-14) — a downside-biased span was considered and rejected as a stance the grid shouldn't silently take."
 
+  - id: nominal_gdp_proxy
+    label: Nominal GDP proxy (preset constant)
+    category: terminal_value
+    default: "4.0%"
+    value: 0.04
+    derivation: >
+      ≈ 2% long-run real growth + 2% inflation, round numbers. Used only by the
+      damodaran_implied preset's terminal-growth rule min(nominal_gdp_proxy, 10Y);
+      the derived default keeps its own house cap. Editable constant: change it
+      here and in engine/presets.py NOMINAL_GDP_PROXY (a parity test asserts the
+      two match).
+    editable: true
+    tradeoff: >
+      A perpetuity growing faster than nominal GDP eventually IS the economy; the
+      proxy caps the preset's g at the economy's own long-run nominal rate, with
+      the 10Y as the binding ceiling when rates are lower.
+
   - id: implied_crosscheck
     label: Implied g ↔ implied multiple cross-check
     category: terminal_value
@@ -298,7 +327,7 @@ conventions:
   - id: assumption_presets
     label: Assumption presets
     category: assumptions
-    default: "derived (the identity case); built-ins: market_implied, street_convention, downside — full definitions, rationales, and per-field rules render automatically from engine/presets.yaml"
+    default: "derived (the identity case); built-ins: market_implied, street_convention, downside, damodaran_implied — full definitions, rationales, and per-field rules render automatically from engine/presets.yaml"
     derivation: "A preset is a stated methodology: name + one-line rationale + a derivation rule per field, held to the same standard as the derived defaults (no hand-picked numbers). Strict layering: derive from history → apply preset → apply user overrides; every assumption carries provenance (derived | preset:<name> | user) in the CLI, the UI, and the workbook's assumptions sheet"
     editable: true
     tradeoff: >

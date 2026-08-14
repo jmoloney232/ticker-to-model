@@ -185,7 +185,7 @@ income; impute unobservable expense.
 | Field | Default | Notes |
 |---|---|---|
 | `risk_free` | Spot 10Y Treasury (FRED DGS10) | Staleness labeled when served from cache; normalized-rate override supported |
-| `erp` | 5.0% | 4.5–6% are all defensible; 5% is mid-range. No pretense of an observable "true" value |
+| `erp` | 5.0% | **A house combination, named as such.** The published packages are matched ERP/risk-free *pairs*: Damodaran's implied US ERP 4.23% (Jan 2026) paired with the spot 10Y; Kroll's recommended 5.0% (reaffirmed Jan 2026) paired with the higher of a normalized 3.5% or the spot 20Y. The engine default takes Kroll's level with Damodaran's risk-free convention — defensible, but a third combination neither source publishes. The `damodaran_implied` preset applies the Damodaran package as published (§9) |
 | `beta` | 2y weekly OLS vs SPY, **Blume-adjusted** (⅔β + ⅓) | Computed in-house from split-adjusted bars; ≥80 paired weekly observations required, else β = 1.0 fallback with a loud warning |
 | `beta_raw` | The unadjusted regression beta | Display + toggle |
 
@@ -478,6 +478,7 @@ quietly moving a different lever.
 | `derived` | The identity case — every field keeps provenance `derived` |
 | `market_implied` | `terminal_growth` solved so Gordon = market price (§8) |
 | `street_convention` | `terminal_growth = max(1.5%, 10Y)` (ceiling lifted to the 10Y itself); `capex_pct = (capex_pct + historical D&A%)/2` (midpoint of a fade to maintenance parity); `effective_tax_fy1 = marginal_tax` (marginal from FY1) |
+| `damodaran_implied` | The Damodaran cost-of-equity package as published, not mixed: `erp = 4.23%` (implied US ERP, Jan 2026 — a literal with its source and as-of in provenance), paired with the spot 10Y the engine already uses; `terminal_growth = min(nominal-GDP proxy 4.0%, 10Y)`. The GDP proxy is an editable constant in `methodology.yaml`, parity-tested against the engine |
 | `downside` | Full cost stack from the **worst-EBIT-margin year** in the window; FY1 growth premium over terminal g halved (faster fade, never raised for decliners); `beta = max(raw β, 1.0)` — the Blume benefit declined and sub-market betas stressed to 1 (correlations rise toward 1 in drawdowns) |
 
 ---

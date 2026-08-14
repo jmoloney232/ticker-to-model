@@ -138,6 +138,55 @@ class TestStreetConvention:
         assert flags[0].detail["provenance"] == "preset:street_convention"
 
 
+class TestDamodaranImplied:
+    """Audit task 3: the Damodaran package as published, never mixed."""
+
+    def test_erp_literal_with_source_in_provenance(self):
+        m = toy_with_preset("damodaran_implied")
+        erp = m.assumptions.fields["erp"]
+        assert m.assumptions.eff("erp") == pytest.approx(0.0423)
+        assert erp.provenance == "preset:damodaran_implied"
+        assert "January 2026" in erp.preset_note
+        assert "spot 10Y" in erp.preset_note
+
+    def test_terminal_growth_min_of_gdp_proxy_and_rf(self):
+        # toy rf 4% = the GDP proxy → g = 4%; within published g ≤ rf so P5
+        # passes, above the 2.5% house cap so the info flag fires
+        m = toy_with_preset("damodaran_implied")
+        assert m.assumptions.eff("terminal_growth") == pytest.approx(0.04)
+        assert m.checks.result("P5").status == "pass"
+        assert "terminal_g_above_house_cap" in {w.code for w in m.warnings}
+        # a lower 10Y binds instead of the proxy
+        m2 = toy_with_preset("damodaran_implied",
+                             market=toy_market(rf=0.03))
+        assert m2.assumptions.eff("terminal_growth") == pytest.approx(0.03)
+
+    def test_risk_free_and_everything_else_stay_derived(self):
+        m = toy_with_preset("damodaran_implied")
+        assert m.assumptions.fields["risk_free"].provenance == "derived"
+        assert m.assumptions.fields["capex_pct"].provenance == "derived"
+
+    def test_gdp_proxy_parity_with_methodology(self):
+        import yaml as _yaml
+
+        from engine.presets import NOMINAL_GDP_PROXY
+        doc = _yaml.safe_load(
+            open("engine/methodology.yaml"))      # noqa: SIM115 — test-only I/O
+        entry = next(c for c in doc["conventions"]
+                     if c["id"] == "nominal_gdp_proxy")
+        assert entry["value"] == NOMINAL_GDP_PROXY
+
+    def test_validation_never_bypassed(self):
+        # ERP forced tiny via override on top of the preset → WACC below the
+        # preset's g → the hard block still fires, preset or no preset
+        h, mkt = toy_history(), toy_market()
+        a = apply_preset(derive_assumptions(h, mkt),
+                         PRESETS["damodaran_implied"], h, mkt, VD)
+        with pytest.raises(InvalidAssumptionError):
+            build_model(h, mkt, valuation_date=VD, assumptions=a,
+                        overrides={"erp": 0.01, "beta": 0.1})
+
+
 class TestDownside:
     def _varied_history(self):
         # rising revenues + one bad-margin year (FY2023: SG&A 250, EBIT 200)

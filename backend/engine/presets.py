@@ -44,7 +44,12 @@ from .errors import InvalidAssumptionError, PresetUnavailableError
 from .models import Assumptions
 
 PRESETS_PATH = Path(__file__).parent / "presets.yaml"
-BUILTIN_NAMES = ("derived", "market_implied", "street_convention", "downside")
+BUILTIN_NAMES = ("derived", "market_implied", "street_convention", "downside",
+                 "damodaran_implied")
+# Nominal-GDP proxy for the damodaran_implied preset's terminal-growth rule
+# (≈ 2% real + 2% inflation). Parity-tested against methodology.yaml's
+# nominal_gdp_proxy entry.
+NOMINAL_GDP_PROXY = 0.04
 _FORMS = ("rule", "literal", "solved")
 _APPLICABILITY_KEYS = ("cost_structure", "min_history_years", "absent_warnings")
 
@@ -58,6 +63,8 @@ class PresetField:
     solver: str | None = None
     target: str | None = None
     optional: bool = False                # skip when structurally absent
+    note: str | None = None               # provenance note (source, as-of) —
+                                          # shown instead of the default note
 
 
 @dataclass(frozen=True)
@@ -111,7 +118,8 @@ def parse_presets(doc: dict) -> dict[str, Preset]:
                 name=fname, form=form, rule=spec.get("rule"),
                 value=spec.get("value"), solver=spec.get("solver"),
                 target=spec.get("target"),
-                optional=bool(spec.get("optional", False)))
+                optional=bool(spec.get("optional", False)),
+                note=spec.get("note"))
         out[name] = Preset(name=name, title=entry.get("title", name),
                            rationale=rationale, builtin=builtin,
                            applicability=applicability, fields=fields)
@@ -168,6 +176,7 @@ def rule_namespace(history: FinancialHistory, market: MarketInputs,
                 and not isinstance(a.value, bool)):
             ns[name] = float(a.value)
     ns["market_price"] = market.price.value
+    ns["nominal_gdp_proxy"] = NOMINAL_GDP_PROXY
     # beta_raw falls back to the derived beta (the 1.0 fallback) when the
     # regression is unavailable — max(beta_raw, 1.0) then resolves to 1.0,
     # which is the same stress the rule intends (disclosed in spec 04)
@@ -229,7 +238,8 @@ def apply_preset(assumptions: Assumptions, preset: Preset,
                 preset.name, f"field {fname!r} does not exist for this filer "
                              "(and is not marked optional)")
         if spec.form == "literal":
-            value, note = spec.value, "literal (no derivation — user-form)"
+            value = spec.value
+            note = spec.note or "literal (no derivation — user-form)"
         elif spec.form == "rule":
             try:
                 value = evaluate_rule(spec.rule, ns)
