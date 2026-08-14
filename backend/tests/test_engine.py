@@ -104,11 +104,12 @@ def toy_model(overrides=None, **kwargs):
 
 # Hand-derived constants (comments show the arithmetic, not the code's):
 #   Ke = 4% + 1.0×5% = 9%     (beta raw 1.0 → Blume-adjusted 1.0 exactly)
-#   coverage = (3×250)/(3×10) = 25 → AAA/AA spread 0.70% → Kd = 4.7%
-#   Kd after tax = 4.7% × (1−25%) = 3.525%
+#   coverage = (3×250)/(3×10) = 25 → Aaa/AAA spread 0.40% → Kd = 4.4%
+#     (Damodaran large-firm table, 2026-01)
+#   Kd after tax = 4.4% × (1−25%) = 3.30%
 #   E = 50×10 = 500, D = 300 → wE = 0.625, wD = 0.375
-#   WACC = 0.625×9% + 0.375×3.525% = 5.625% + 1.321875% = 6.946875%
-WACC = 0.06946875
+#   WACC = 0.625×9% + 0.375×3.30% = 5.625% + 1.2375% = 6.8625%
+WACC = 0.068625
 
 
 class TestMicroAssumptions:
@@ -140,8 +141,8 @@ class TestMicroAssumptions:
         m = toy_model()
         w = m.wacc
         assert w.cost_of_equity == pytest.approx(0.09)
-        assert w.rating == "AAA/AA" and w.spread == pytest.approx(0.007)
-        assert w.kd_after_tax == pytest.approx(0.047 * 0.75)
+        assert w.rating == "Aaa/AAA" and w.spread == pytest.approx(0.004)
+        assert w.kd_after_tax == pytest.approx(0.044 * 0.75)
         assert (w.weight_equity, w.weight_debt) == (pytest.approx(0.625),
                                                     pytest.approx(0.375))
         assert w.wacc == pytest.approx(WACC)
@@ -302,6 +303,51 @@ class TestProperties:
         assert "beta_fallback" in m.checks.result("P7").detail
 
 
+class TestRatingBrackets:
+    """The audit's headline bug: the old table truncated the distressed range
+    at 'coverage > 0 → 4%', charging 0.5x-coverage filers a 4% spread where
+    the published table charges 16%."""
+
+    def test_bracket_assignment_spans_the_distressed_range(self):
+        from engine.assumptions import rating_for_coverage
+        cases = [(25.0, "Aaa/AAA", 0.0040), (7.0, "Aa2/AA", 0.0055),
+                 (4.25, "A3/A-", 0.0089),   # boundary: > is strict
+                 (2.6, "Baa2/BBB", 0.0111), (1.6, "B2/B", 0.0321),
+                 (1.0, "Caa/CCC", 0.0885), (0.7, "Ca2/CC", 0.1261),
+                 (0.5, "C2/C", 0.1600),     # the audit's example: was 4%
+                 (0.1, "D2/D", 0.1900), (-3.0, "D2/D", 0.1900)]
+        for coverage, rating, spread in cases:
+            got_r, got_s = rating_for_coverage(coverage)
+            assert (got_r, got_s) == (rating, spread), coverage
+
+    def test_no_traceable_interest_gets_top_bracket(self):
+        from engine.assumptions import rating_for_coverage
+        assert rating_for_coverage(None) == ("Aaa/AAA", 0.0040)
+
+    def test_distressed_warning_fires_with_recovery_pointer(self):
+        # coverage overridden to 1.0 → Caa/CCC (8.85%) → the warning fires
+        m = toy_model(overrides={"coverage_ratio": 1.0})
+        assert m.wacc.spread >= 0.0885
+        codes = {w.code for w in m.warnings}
+        assert "synthetic_rating_distressed" in codes
+        msg = next(w.message for w in m.warnings
+                   if w.code == "synthetic_rating_distressed")
+        assert "reverse-DCF" in msg and "going-concern" in msg
+
+    def test_investment_grade_does_not_draw_distressed_warning(self):
+        m = toy_model()
+        assert "synthetic_rating_distressed" not in {w.code for w in m.warnings}
+
+    def test_rating_table_staleness_flag(self):
+        from datetime import date as _date
+        m = build_model(toy_history(), toy_market(),
+                        valuation_date=_date(2028, 6, 30))
+        stale = [w for w in m.warnings if w.code == "rating_table_stale"]
+        assert stale and stale[0].severity == "info"
+        m2 = toy_model()          # golden-era vd: within 18 months, no flag
+        assert "rating_table_stale" not in {w.code for w in m2.warnings}
+
+
 class TestSpreadTableParity:
     def test_engine_constants_match_methodology_yaml(self):
         doc = yaml.safe_load(
@@ -310,6 +356,9 @@ class TestSpreadTableParity:
         yaml_rows = [(r["coverage_above"], r["rating"], r["spread"])
                      for r in entry["spread_table"]]
         assert yaml_rows == list(SPREAD_TABLE)
+        from engine.assumptions import RATING_TABLE_AS_OF
+        assert entry["spread_table_as_of"] == (
+            f"{RATING_TABLE_AS_OF[0]}-{RATING_TABLE_AS_OF[1]:02d}")
 
 
 class TestFixtureInvariants:

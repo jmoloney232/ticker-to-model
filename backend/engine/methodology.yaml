@@ -92,22 +92,41 @@ conventions:
     label: Cost of debt
     category: wacc
     default: "Synthetic rating: 3y avg interest coverage (EBIT÷interest) → rating → default spread → Kd = rf + spread; toggle: embedded rate (interest ÷ avg gross book debt)"
-    derivation: "Spread table below (adapted from Damodaran's synthetic-rating tables; placeholder values — verify against the current published table at build time)"
+    derivation: >
+      Spread table below — Damodaran's LARGE non-financial firms table (the small-cap
+      table has different breakpoints), data as of 2026-01; a rating_table_stale flag
+      fires when the table is more than 18 months older than the valuation date.
+      Disclosed: synthetic rating is a fallback method intended for unrated issuers —
+      most companies in this universe carry an actual agency rating the engine does
+      not yet ingest (known-limitations, v2). At or above the Caa/CCC bracket a
+      synthetic_rating_distressed warning states that the method and the
+      going-concern DCF framing are both under strain.
     editable: true
     tradeoff: >
       The embedded coupon measures legacy debt, not marginal refi cost — 3% notes from
       2021 against a 7% refi environment make financing look far cheaper than it is.
       Synthetic rating estimates the marginal rate with no new data. After-taxed at the
       SAME marginal rate as terminal NOPAT (mismatch is a classic silent bug; asserted).
+      The distressed brackets run to D at 19% — truncating them would understate Kd
+      (and overstate value) exactly for the companies most likely to be worth nothing.
+    spread_table_source: "Damodaran, NYU Stern — large non-financial firms"
+    spread_table_as_of: "2026-01"
     spread_table:
-      - {coverage_above: 12.5, rating: "AAA/AA", spread: 0.0070}
-      - {coverage_above: 9.5,  rating: "A+",     spread: 0.0090}
-      - {coverage_above: 7.5,  rating: "A",      spread: 0.0105}
-      - {coverage_above: 6.0,  rating: "A-",     spread: 0.0120}
-      - {coverage_above: 4.5,  rating: "BBB+",   spread: 0.0150}
-      - {coverage_above: 3.5,  rating: "BBB",    spread: 0.0180}
-      - {coverage_above: 3.0,  rating: "BB+",    spread: 0.0250}
-      - {coverage_above: 0.0,  rating: "BB and below", spread: 0.0400}
+      - {coverage_above: 8.5,       coverage_upto: 100000,   rating: "Aaa/AAA",  spread: 0.0040}
+      - {coverage_above: 6.5,       coverage_upto: 8.499999, rating: "Aa2/AA",   spread: 0.0055}
+      - {coverage_above: 5.5,       coverage_upto: 6.499999, rating: "A1/A+",    spread: 0.0070}
+      - {coverage_above: 4.25,      coverage_upto: 5.499999, rating: "A2/A",     spread: 0.0078}
+      - {coverage_above: 3.0,       coverage_upto: 4.249999, rating: "A3/A-",    spread: 0.0089}
+      - {coverage_above: 2.5,       coverage_upto: 2.999999, rating: "Baa2/BBB", spread: 0.0111}
+      - {coverage_above: 2.25,      coverage_upto: 2.499999, rating: "Ba1/BB+",  spread: 0.0138}
+      - {coverage_above: 2.0,       coverage_upto: 2.249999, rating: "Ba2/BB",   spread: 0.0184}
+      - {coverage_above: 1.75,      coverage_upto: 1.999999, rating: "B1/B+",    spread: 0.0275}
+      - {coverage_above: 1.5,       coverage_upto: 1.749999, rating: "B2/B",     spread: 0.0321}
+      - {coverage_above: 1.25,      coverage_upto: 1.499999, rating: "B3/B-",    spread: 0.0509}
+      - {coverage_above: 0.8,       coverage_upto: 1.249999, rating: "Caa/CCC",  spread: 0.0885}
+      - {coverage_above: 0.65,      coverage_upto: 0.799999, rating: "Ca2/CC",   spread: 0.1261}
+      - {coverage_above: 0.2,       coverage_upto: 0.649999, rating: "C2/C",     spread: 0.1600}
+      - {coverage_above: -100000.0, coverage_upto: 0.199999, rating: "D2/D",     spread: 0.1900}
 
   - id: wacc_weights
     label: WACC weights

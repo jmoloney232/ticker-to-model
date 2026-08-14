@@ -23,18 +23,35 @@ ERP = 0.05
 TERMINAL_G_FLOOR, TERMINAL_G_CEIL = 0.015, 0.025
 CASH_FLOOR_PCT = 0.02
 
-# Synthetic-rating spread table. Constants here because the engine does no I/O;
-# a parity test asserts these match methodology.yaml's spread_table exactly.
+# Synthetic-rating spread table — Damodaran, "Ratings, Interest Coverage
+# Ratios and Default Spread", LARGE non-financial firms table, data as of
+# 2026-01 (the small-cap table has different breakpoints; this engine is
+# scoped to large caps). Constants here because the engine does no I/O; a
+# parity test asserts these match methodology.yaml's spread_table exactly.
+# The final bracket's floor is an effective -inf: negative-coverage filers
+# land in D, not in a truncated "everything else" bucket — truncating the
+# distressed range understates Kd exactly where it matters most.
+RATING_TABLE_AS_OF = (2026, 1)
 SPREAD_TABLE: list[tuple[float, str, float]] = [
-    (12.5, "AAA/AA", 0.0070),
-    (9.5, "A+", 0.0090),
-    (7.5, "A", 0.0105),
-    (6.0, "A-", 0.0120),
-    (4.5, "BBB+", 0.0150),
-    (3.5, "BBB", 0.0180),
-    (3.0, "BB+", 0.0250),
-    (0.0, "BB and below", 0.0400),
+    (8.5, "Aaa/AAA", 0.0040),
+    (6.5, "Aa2/AA", 0.0055),
+    (5.5, "A1/A+", 0.0070),
+    (4.25, "A2/A", 0.0078),
+    (3.0, "A3/A-", 0.0089),
+    (2.5, "Baa2/BBB", 0.0111),
+    (2.25, "Ba1/BB+", 0.0138),
+    (2.0, "Ba2/BB", 0.0184),
+    (1.75, "B1/B+", 0.0275),
+    (1.5, "B2/B", 0.0321),
+    (1.25, "B3/B-", 0.0509),
+    (0.8, "Caa/CCC", 0.0885),
+    (0.65, "Ca2/CC", 0.1261),
+    (0.2, "C2/C", 0.1600),
+    (-100000.0, "D2/D", 0.1900),
 ]
+# The Caa/CCC spread: at or above this bracket the synthetic-rating method and
+# the going-concern DCF framing are both under strain (warning in build_model).
+DISTRESSED_SPREAD = next(s for _, r, s in SPREAD_TABLE if r == "Caa/CCC")
 
 
 def rating_for_coverage(coverage: float | None) -> tuple[str, float]:
@@ -266,8 +283,13 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
                          "— deliberate asymmetry)", unit="flag")
     add("sbc_addback", False, "SBC stays a real expense (owner-confirmed); toggle "
                               "re-adds it as non-cash", unit="flag")
-    add("kd_synthetic", True, "Synthetic-rating Kd default; toggle = embedded "
-                              "legacy rate", unit="flag")
+    add("kd_synthetic", True,
+        "Synthetic-rating Kd default (Damodaran large-firm table, as of "
+        f"{RATING_TABLE_AS_OF[0]}-{RATING_TABLE_AS_OF[1]:02d}); toggle = "
+        "embedded legacy rate. Disclosed: synthetic rating is a fallback "
+        "method intended for unrated issuers — most companies in this "
+        "universe carry an actual agency rating the engine does not yet "
+        "ingest (see known-limitations)", unit="flag")
     add("beta_adjusted", True, "Blume adjustment on (⅔β + ⅓)", unit="flag")
 
     return Assumptions(fields=a, cost_structure=cs)

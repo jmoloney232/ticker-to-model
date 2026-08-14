@@ -55,17 +55,21 @@ def provenance_counts(m: ModelResult) -> dict[str, int]:
 
 
 def warnings_out(m: ModelResult) -> list[dict]:
+    # severity: "warn" | "info" — info = disclosure, not defect. Ingest and
+    # market warnings predate the field and are all "warn".
     out = []
     for w in m.history.warnings:
         out.append({"origin": "ingest", "code": w.code, "message": w.message,
                     "fiscal_year": w.fiscal_year, "item": w.item,
-                    "detail": dict(w.detail)})
+                    "severity": "warn", "detail": dict(w.detail)})
     for w in m.market.warnings:
         out.append({"origin": "market", "code": w.code, "message": w.message,
-                    "fiscal_year": None, "item": None, "detail": dict(w.detail)})
+                    "fiscal_year": None, "item": None, "severity": "warn",
+                    "detail": dict(w.detail)})
     for w in m.warnings:
         out.append({"origin": "engine", "code": w.code, "message": w.message,
-                    "fiscal_year": None, "item": None, "detail": dict(w.detail)})
+                    "fiscal_year": None, "item": None, "severity": w.severity,
+                    "detail": dict(w.detail)})
     return out
 
 

@@ -11,7 +11,13 @@ from datetime import date
 from ingest.models import CheckResult, FinancialHistory, ValidationReport
 from market.models import MarketInputs
 
-from .assumptions import apply_overrides, derive_assumptions, gross_debt
+from .assumptions import (
+    DISTRESSED_SPREAD,
+    RATING_TABLE_AS_OF,
+    apply_overrides,
+    derive_assumptions,
+    gross_debt,
+)
 from .errors import InvalidAssumptionError
 from .models import (
     Assumptions,
@@ -343,6 +349,27 @@ def build_model(history: FinancialHistory, market: MarketInputs,
 
     wacc_build = build_wacc(history, market, a)
     wacc = wacc_build.wacc
+    if wacc_build.spread >= DISTRESSED_SPREAD:
+        warnings.append(EngineWarning(
+            code="synthetic_rating_distressed",
+            message=(f"Synthetic rating {wacc_build.rating} (coverage-implied "
+                     f"spread {wacc_build.spread:.2%}): at this level the "
+                     "synthetic-rating approach and the going-concern DCF "
+                     "framing are both under strain — the reverse-DCF / "
+                     "recovery view is more informative than the forward "
+                     "model."),
+            detail={"rating": wacc_build.rating, "spread": wacc_build.spread}))
+    table_age_days = (valuation_date
+                      - date(RATING_TABLE_AS_OF[0], RATING_TABLE_AS_OF[1], 1)).days
+    if table_age_days > 548:                      # 18 months
+        warnings.append(EngineWarning(
+            code="rating_table_stale", severity="info",
+            message=(f"The synthetic-rating spread table is dated "
+                     f"{RATING_TABLE_AS_OF[0]}-{RATING_TABLE_AS_OF[1]:02d} — "
+                     "more than 18 months before the valuation date. Credit "
+                     "spreads move; refresh the table from the published "
+                     "source."),
+            detail={"as_of": f"{RATING_TABLE_AS_OF[0]}-{RATING_TABLE_AS_OF[1]:02d}"}))
     g = a.eff("terminal_growth")
     if g >= wacc:
         raise InvalidAssumptionError("terminal_growth",

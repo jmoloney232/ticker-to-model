@@ -157,6 +157,7 @@ class EngineWarning:
     code: str
     message: str
     detail: dict = field(default_factory=dict)
+    severity: str = "warn"        # "warn" | "info" — info = disclosure, not defect
 
 
 @dataclass

@@ -722,8 +722,10 @@ class _Writer:
         r += 1
         r = self._vrow(ws, r, "Cost of equity = rf + β × ERP", "ke",
                        "=risk_free+beta*erp", FMT_PCT)
-        spread_if = "0.04"
-        rating_if = '"BB and below"'
+        # innermost else = the table's own bottom bracket (never hardcoded —
+        # a truncated distressed range was the audit's headline bug)
+        spread_if = f"{SPREAD_TABLE[-1][2]}"
+        rating_if = f'"{SPREAD_TABLE[-1][1]}"'
         for floor, rating, spread in reversed(SPREAD_TABLE[:-1]):
             spread_if = f"IF(coverage_ratio>{floor},{spread},{spread_if})"
             rating_if = f'IF(coverage_ratio>{floor},"{rating}",{rating_if})'

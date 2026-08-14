@@ -163,3 +163,20 @@ are verified per filer, never added speculatively), then re-running the scan
 and the diagnostic batch. **Queued as the next ingest chain round** (owner
 decision, 2026-08-14). The expense-coverage metric now reads E21% for MCD, so
 the fixed alarm also measures this queue's progress.
+
+## 8. Synthetic ratings where actual agency ratings exist (v2)
+
+**What:** the cost of debt is estimated by synthetic rating (coverage → spread)
+for every filer. Synthetic rating is a fallback method intended for *unrated*
+issuers — most large-caps in this universe carry an actual Moody's/S&P rating
+that would price their debt directly. The kd_synthetic derivation string and
+the methodology entry disclose this.
+
+**Why:** agency ratings aren't in EDGAR company facts; ingesting them means a
+new data source (or parsing ratings out of filings' exhibits, which is
+unreliable).
+
+**Fixing it would require:** an agency-ratings ingest source with its own
+staleness/provenance treatment, a documented mapping from rating to spread
+(same published table), and precedence rules (actual rating wins; synthetic
+stays as the fallback and the cross-check). Tractable v2 item.

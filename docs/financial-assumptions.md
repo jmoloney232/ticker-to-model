@@ -294,26 +294,43 @@ WACC = We × Ke + Wd × Kd × (1 − marginal tax)
 - **Beta selection order:** user override → preset value → (no market beta: 1.0
   fallback, warned) → Blume-adjusted (default) or raw (toggle).
 - **Synthetic rating:** 3y interest coverage (§2.6) maps to a rating and default
-  spread through this table (adapted from Damodaran's synthetic-rating approach;
-  a parity test asserts the engine's constants match `methodology.yaml` exactly):
+  spread through Damodaran's **large non-financial firms** table (data as of
+  **2026-01** — a `rating_table_stale` flag fires when the table is >18 months
+  older than the valuation date; a parity test asserts the engine's constants
+  match `methodology.yaml` exactly):
 
   | Coverage > | Rating | Spread |
   |---|---|---|
-  | 12.5 | AAA/AA | 0.70% |
-  | 9.5 | A+ | 0.90% |
-  | 7.5 | A | 1.05% |
-  | 6.0 | A− | 1.20% |
-  | 4.5 | BBB+ | 1.50% |
-  | 3.5 | BBB | 1.80% |
-  | 3.0 | BB+ | 2.50% |
-  | 0.0 | BB and below | 4.00% |
+  | 8.50 | Aaa/AAA | 0.40% |
+  | 6.50 | Aa2/AA | 0.55% |
+  | 5.50 | A1/A+ | 0.70% |
+  | 4.25 | A2/A | 0.78% |
+  | 3.00 | A3/A− | 0.89% |
+  | 2.50 | Baa2/BBB | 1.11% |
+  | 2.25 | Ba1/BB+ | 1.38% |
+  | 2.00 | Ba2/BB | 1.84% |
+  | 1.75 | B1/B+ | 2.75% |
+  | 1.50 | B2/B | 3.21% |
+  | 1.25 | B3/B− | 5.09% |
+  | 0.80 | Caa/CCC | 8.85% |
+  | 0.65 | Ca2/CC | 12.61% |
+  | 0.20 | C2/C | 16.00% |
+  | (below) | D2/D | 19.00% |
 
-  No traceable interest → the top bracket, disclosed. Why synthetic over embedded by
-  default: the embedded coupon measures *legacy* debt — 3% notes issued in 2021
-  against a 7% refi environment make financing look far cheaper than it is. The
-  synthetic rate estimates the *marginal* cost with no new data. The embedded rate
-  remains available as a toggle (and silently falls back to synthetic, disclosed,
-  when no coupon is observable).
+  The distressed brackets run all the way to D — truncating them would understate
+  the cost of debt (and overstate value) exactly for the companies most likely to
+  be worth nothing. At or above the Caa/CCC bracket, a
+  `synthetic_rating_distressed` warning states that both the synthetic-rating
+  method and the going-concern DCF framing are under strain, and points at the
+  reverse-DCF recovery view. No traceable interest → the top bracket, disclosed.
+  **Disclosed limitation:** synthetic rating is a fallback method intended for
+  *unrated* issuers; most companies in this universe carry an actual agency
+  rating the engine does not yet ingest (known-limitations, v2). Why synthetic
+  over embedded by default: the embedded coupon measures *legacy* debt — 3% notes
+  issued in 2021 against a 7% refi environment make financing look far cheaper
+  than it is. The synthetic rate estimates the *marginal* cost with no new data.
+  The embedded rate remains available as a toggle (and silently falls back to
+  synthetic, disclosed, when no coupon is observable).
 - **Weights: equity at market cap** (price × the §7.2 share proxy), **debt at gross
   book value** including finance leases. Book debt is the standard proxy for
   investment-grade names when bond prices aren't available. **Net debt appears only
