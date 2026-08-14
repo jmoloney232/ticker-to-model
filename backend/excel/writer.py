@@ -111,7 +111,8 @@ ASSUMPTION_GROUPS = [
     ("Interest", ["embedded_debt_rate", "interest_income_yield"]),
     ("Cost of capital", ["beta", "beta_raw", "erp", "risk_free",
                          "coverage_ratio"]),
-    ("Terminal value", ["terminal_growth", "terminal_roic"]),
+    ("Terminal value", ["terminal_growth", "terminal_growth_rf_ceiling",
+                        "terminal_roic"]),
     ("Exit & bridge", ["exit_multiple", "share_count", "cash_floor_pct"]),
     ("Toggles", ["midyear", "sbc_addback", "kd_synthetic", "beta_adjusted"]),
 ]

@@ -303,6 +303,37 @@ class TestProperties:
         assert "beta_fallback" in m.checks.result("P7").detail
 
 
+class TestTerminalGrowthChecks:
+    """Audit task 2: P5 polices the PUBLISHED constraint (g ≤ rf); the house
+    cap draws only an info flag; the rf ceiling is displayed, never hidden."""
+
+    def test_p5_warns_only_above_risk_free(self):
+        # toy rf = 4%, WACC ≈ 6.86%: 5% is above rf → P5 warns
+        m = toy_model(overrides={"terminal_growth": 0.05})
+        assert m.checks.result("P5").status == "warn"
+        assert "user" in m.checks.result("P5").detail
+
+    def test_house_cap_band_draws_info_flag_not_p5(self):
+        # 3% is above the 2.5% house cap but ≤ rf (4%) → info flag, P5 pass
+        m = toy_model(overrides={"terminal_growth": 0.03})
+        assert m.checks.result("P5").status == "pass"
+        flags = [w for w in m.warnings if w.code == "terminal_g_above_house_cap"]
+        assert flags and flags[0].severity == "info"
+        assert "house cap" in flags[0].message
+
+    def test_derived_default_draws_neither(self):
+        m = toy_model()
+        assert m.checks.result("P5").status == "pass"
+        assert "terminal_g_above_house_cap" not in {w.code for w in m.warnings}
+
+    def test_rf_ceiling_displayed_beside_the_default(self):
+        m = toy_model()
+        assert m.assumptions.eff("terminal_growth_rf_ceiling") == \
+            pytest.approx(0.04)
+        from engine.assumptions import DISPLAY_ONLY
+        assert "terminal_growth_rf_ceiling" in DISPLAY_ONLY
+
+
 class TestRatingBrackets:
     """The audit's headline bug: the old table truncated the distressed range
     at 'coverage > 0 → 4%', charging 0.5x-coverage filers a 4% spread where

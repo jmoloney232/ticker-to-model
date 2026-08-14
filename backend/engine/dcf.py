@@ -14,6 +14,7 @@ from market.models import MarketInputs
 from .assumptions import (
     DISTRESSED_SPREAD,
     RATING_TABLE_AS_OF,
+    TERMINAL_G_CEIL,
     apply_overrides,
     derive_assumptions,
     gross_debt,
@@ -257,10 +258,11 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
     p4_ok = (g < wacc_build.wacc and wacc_build.wacc > 0
              and a.eff("share_count") > 0)
 
-    # P5 treats a preset-stated g exactly like a user override: presets never
-    # suppress warnings, so market_implied / street_convention g above the
-    # default ceiling warns with its provenance named.
-    ceiling = min(0.025, a.eff("risk_free"))
+    # P5 warns against the PUBLISHED constraint (g ≤ rf — audit task 2); the
+    # engine's stricter house cap draws only an info flag (build_model).
+    # Preset-stated g is treated exactly like a user override: presets never
+    # suppress warnings, and the provenance is named.
+    ceiling = a.eff("risk_free")
     tg = a.fields["terminal_growth"]
     p5_warn = tg.stated is not None and tg.stated > ceiling
 
@@ -288,8 +290,10 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
                     detail=f"g={g:.2%} < WACC={wacc_build.wacc:.2%}; WACC > 0; "
                            "shares > 0; RR < 1"),
         CheckResult("P5", "warn", "warn" if p5_warn else "pass",
-                    detail=f"Terminal-g ({tg.provenance}) above min(2.5%, 10Y)"
-                    if p5_warn else "Terminal g within the default ceiling"),
+                    detail=f"Terminal-g ({tg.provenance}) above the risk-free "
+                           "rate — outside the published g ≤ rf constraint"
+                    if p5_warn else
+                    "Terminal g within the published g ≤ rf constraint"),
         CheckResult("P6", "warn", "warn" if p6_warn else "pass",
                     magnitude=leases,
                     detail=("Operating lease liability exceeds 25% of gross debt — "
@@ -374,6 +378,19 @@ def build_model(history: FinancialHistory, market: MarketInputs,
     if g >= wacc:
         raise InvalidAssumptionError("terminal_growth",
                                      f"must be below WACC ({wacc:.2%})", g)
+    rf = a.eff("risk_free")
+    house_cap = min(TERMINAL_G_CEIL, rf)
+    tg_field = a.fields["terminal_growth"]
+    if tg_field.stated is not None and house_cap < tg_field.stated <= rf:
+        warnings.append(EngineWarning(
+            code="terminal_g_above_house_cap", severity="info",
+            message=(f"Terminal growth {tg_field.stated:.2%} "
+                     f"({tg_field.provenance}) is above the engine's "
+                     f"conservative house cap min(2.5%, 10Y) = {house_cap:.2%} "
+                     f"but within the published constraint g ≤ risk-free "
+                     f"({rf:.2%})."),
+            detail={"provenance": tg_field.provenance,
+                    "house_cap": house_cap}))
 
     projections = project(history, a)
     for p in projections:

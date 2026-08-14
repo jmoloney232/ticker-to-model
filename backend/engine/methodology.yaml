@@ -151,14 +151,22 @@ conventions:
   - id: terminal_growth
     label: Terminal growth rate
     category: terminal_value
-    default: "max(1.5%, min(2.5%, 10Y yield))"
-    derivation: "Anchored to nominal GDP logic (rf ≈ inflation + real growth), floored at 1.5%"
+    default: "max(1.5%, min(2.5%, 10Y yield)) — a HOUSE CAP, deliberately below the published rule"
+    derivation: >
+      Anchored to nominal GDP logic (rf ≈ inflation + real growth), floored at 1.5%.
+      The published constraint (Damodaran) is g ≤ risk-free — the rf embeds long-run
+      growth and inflation assumptions the cash flows should share — and the current
+      10Y is displayed beside the default (terminal_growth_rf_ceiling) so the cap
+      hides nothing. The 2.5% ceiling is a deliberate conservative deviation, not a
+      derivation; in the current rate environment the two differ materially.
     editable: true
     tradeoff: >
-      The unfloored Damodaran rule (g ≤ rf) breaks under distorted rates — in 2020 it
-      would have forced g ≈ 0.7% and cut every valuation 20–30% for reasons unrelated
-      to the business. The floor caps that distortion. Overrides above min(2.5%, 10Y)
-      draw a soft warning; g ≥ WACC is hard-blocked.
+      The unfloored g ≤ rf rule breaks under distorted rates — in 2020 it would have
+      forced g ≈ 0.7% and cut every valuation 20–30% for reasons unrelated to the
+      business. The floor caps that distortion. Warning structure (audit 2026-08-14):
+      stated g above the RISK-FREE rate draws the P5 warning (the published
+      constraint); stated g above the house cap but at or below rf draws only an
+      info-level terminal_g_above_house_cap flag; g ≥ WACC is hard-blocked.
 
   - id: terminal_reinvestment
     label: Terminal reinvestment consistency

@@ -127,13 +127,15 @@ class TestStreetConvention:
             build_model(h, mkt, valuation_date=VD, assumptions=a)
         assert "below WACC" in str(exc.value)
 
-    def test_warnings_not_suppressed_p5_names_the_preset(self):
-        # street g (4%) above the default ceiling min(2.5%, 10Y) must warn
-        # exactly as a user override would, with provenance named
+    def test_house_cap_flag_not_suppressed_names_the_preset(self):
+        # street g (4%) = toy rf: within the published g ≤ rf constraint, so
+        # P5 passes (audit task 2) — but it exceeds the 2.5% house cap, so
+        # the info-level flag fires with the preset's provenance named
         m = toy_with_preset("street_convention")
-        p5 = m.checks.result("P5")
-        assert p5.status == "warn"
-        assert "preset:street_convention" in p5.detail
+        assert m.checks.result("P5").status == "pass"
+        flags = [w for w in m.warnings if w.code == "terminal_g_above_house_cap"]
+        assert flags and flags[0].severity == "info"
+        assert flags[0].detail["provenance"] == "preset:street_convention"
 
 
 class TestDownside:

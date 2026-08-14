@@ -244,8 +244,16 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
 
     # ── terminal ───────────────────────────────────────────────────────────
     add("terminal_growth", max(TERMINAL_G_FLOOR, min(TERMINAL_G_CEIL, rf)),
-        "max(1.5%, min(2.5%, 10Y)) — floored so distorted-rate regimes don't "
-        "mechanically crush the valuation", unit="rate")
+        "max(1.5%, min(2.5%, 10Y)) — the engine's conservative HOUSE CAP, a "
+        "deliberate deviation from the published rule (Damodaran: g ≤ rf); "
+        "floored so distorted-rate regimes don't mechanically crush the "
+        "valuation. The rf ceiling is displayed alongside so the cap hides "
+        "nothing", unit="rate")
+    add("terminal_growth_rf_ceiling", rf,
+        "Current 10Y — the published ceiling for terminal g (g ≤ rf: the "
+        "risk-free rate embeds long-run growth and inflation assumptions the "
+        "cash flows should share). Display only, beside the house-capped "
+        "default", unit="rate")
     roic_years = []
     for prev, cur in _prior_pairs(history):
         ic = (gross_debt(prev) + prev.value("stockholders_equity", 0.0)
@@ -293,6 +301,11 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
     add("beta_adjusted", True, "Blume adjustment on (⅔β + ⅓)", unit="flag")
 
     return Assumptions(fields=a, cost_structure=cs)
+
+
+# Computed context, not inputs: shown beside their editable partners so no
+# cap or convention hides anything; never overridable, never named-range inputs.
+DISPLAY_ONLY = frozenset({"revenue_cagr_uncapped", "terminal_growth_rf_ceiling"})
 
 
 def _identity_gap(p: FiscalPeriod) -> float:

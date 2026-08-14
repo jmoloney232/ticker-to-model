@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 
+from engine.assumptions import DISPLAY_ONLY
 from engine.models import Bridge, ModelResult, TerminalLeg
 from engine.presets import Preset, encode_assumption_set
 from engine.reverse import ImpliedResult
@@ -41,7 +42,7 @@ def assumption_rows(m: ModelResult) -> list[dict]:
             "provenance": prov,
             "derived_default": f.value,
             "rule": rule,
-            "editable": f.name != "revenue_cagr_uncapped",   # display-only field
+            "editable": f.name not in DISPLAY_ONLY,
         })
     return rows
 
