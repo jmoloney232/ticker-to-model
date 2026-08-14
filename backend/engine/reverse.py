@@ -69,7 +69,8 @@ def _gordon_per_share(history: FinancialHistory, assumptions: Assumptions,
 
 def _ebit_margin(assumptions: Assumptions) -> float:
     total = sum(assumptions.fields[k].value
-                for k in ("rnd_pct", "sga_pct", "other_opex_pct"))
+                for k in ("rnd_pct", "sga_pct", "other_opex_pct",
+                          "unclassified_costs_pct"))
     if assumptions.cost_structure == "by_function":
         total += assumptions.fields["cogs_pct"].value
     return 1.0 - total

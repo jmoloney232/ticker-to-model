@@ -57,20 +57,25 @@ def run_ticker(ticker: str, edgar, provider) -> dict:
     price = market.price.value
     a = m.assumptions
 
-    gordon = m.bridges["gordon"].value_per_share
+    gordon = (m.bridges["gordon"].value_per_share
+              if "gordon" in m.bridges else None)
     exit_ps = (m.bridges["exit_multiple"].value_per_share
                if "exit_multiple" in m.bridges else None)
 
-    # convention sensitivities — information only, conventions unchanged
-    sbc_on = build_model(history, market, valuation_date=VALUATION_DATE,
-                         overrides={"sbc_addback": True}
-                         ).bridges["gordon"].value_per_share
-    rf = a.eff("risk_free")
-    g_unc = min(rf, m.wacc.wacc - 0.005)       # remove the 2.5% ceiling only
-    g_uncapped = (build_model(history, market, valuation_date=VALUATION_DATE,
-                              overrides={"terminal_growth": g_unc}
-                              ).bridges["gordon"].value_per_share
-                  if g_unc > a.eff("terminal_growth") else gordon)
+    # convention sensitivities — information only, conventions unchanged;
+    # None when the Gordon leg reports its honest unavailable state
+    sbc_on = g_uncapped = gordon
+    if gordon is not None:
+        sbc_on = build_model(history, market, valuation_date=VALUATION_DATE,
+                             overrides={"sbc_addback": True}
+                             ).bridges["gordon"].value_per_share
+        rf = a.eff("risk_free")
+        g_unc = min(rf, m.wacc.wacc - 0.005)   # remove the 2.5% ceiling only
+        if g_unc > a.eff("terminal_growth"):
+            g_uncapped = build_model(history, market,
+                                     valuation_date=VALUATION_DATE,
+                                     overrides={"terminal_growth": g_unc}
+                                     ).bridges["gordon"].value_per_share
     lease_ps = (history.periods[-1].value("operating_lease_liability", 0.0)
                 / a.eff("share_count"))        # bridge-only effect of leases-in-debt
 
@@ -82,7 +87,7 @@ def run_ticker(ticker: str, edgar, provider) -> dict:
     return {
         "ticker": ticker, "sector": history.company.sic_description[:28],
         "price": price, "gordon": gordon, "exit": exit_ps,
-        "gap_gordon": gordon / price - 1,
+        "gap_gordon": gordon / price - 1 if gordon is not None else None,
         "gap_exit": exit_ps / price - 1 if exit_ps else None,
         "wacc": m.wacc.wacc, "beta": m.wacc.beta_used,
         "implied_terminal_multiple": m.crosschecks.get("implied_exit_multiple"),
@@ -90,8 +95,8 @@ def run_ticker(ticker: str, edgar, provider) -> dict:
         "fy1_growth": a.eff("revenue_growth_fy1"),
         "cagr_uncapped": a.eff("revenue_cagr_uncapped"),
         "capex_pct": a.eff("capex_pct"),
-        "sbc_addback_delta": sbc_on - gordon,
-        "g_uncapped_delta": g_uncapped - gordon,
+        "sbc_addback_delta": sbc_on - gordon if gordon is not None else None,
+        "g_uncapped_delta": g_uncapped - gordon if gordon is not None else None,
         "leases_in_debt_delta": -lease_ps,
         "reverse": reverse,
         "warnings": warn_codes,
@@ -117,16 +122,19 @@ def main() -> int:
         try:
             rows.append(run_ticker(ticker, edgar, provider))
             r = rows[-1]
-            print(f"{ticker:<6} gordon {r['gordon']:>9.2f}  "
+            gg = (f"{r['gap_gordon']:>+7.0%}" if r["gap_gordon"] is not None
+                  else "  unavl")
+            print(f"{ticker:<6} gordon {r['gordon'] if r['gordon'] is not None else float('nan'):>9.2f}  "
                   f"exit {r['exit'] or float('nan'):>9.2f}  "
-                  f"price {r['price']:>9.2f}  gap_g {r['gap_gordon']:>+7.0%}")
+                  f"price {r['price']:>9.2f}  gap_g {gg}")
         except (IngestError, MarketDataError, Exception) as exc:  # noqa: BLE001
             failures.append((ticker, type(exc).__name__, str(exc)[:140]))
             print(f"{ticker:<6} FAILED {type(exc).__name__}: {str(exc)[:110]}")
 
-    gaps = [r["gap_gordon"] for r in rows]
-    capex = [r["capex_pct"] for r in rows]
-    growth = [r["fy1_growth"] for r in rows]
+    valued = [r for r in rows if r["gap_gordon"] is not None]
+    gaps = [r["gap_gordon"] for r in valued]
+    capex = [r["capex_pct"] for r in valued]
+    growth = [r["fy1_growth"] for r in valued]
     print(f"\nn={len(rows)}  median gap_gordon="
           f"{sorted(gaps)[len(gaps) // 2]:+.0%}")
     print(f"corr(gap_gordon, capex_pct)  = {pearson(gaps, capex):+.3f}")

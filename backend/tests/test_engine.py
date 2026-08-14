@@ -117,6 +117,8 @@ class TestMicroAssumptions:
         expected = {
             "revenue_growth_fy1": 0.0, "cogs_pct": 0.40, "rnd_pct": 0.10,
             "sga_pct": 0.20, "other_opex_pct": 0.05,
+            # named lines sum exactly to revenue − EBIT → no identity gap
+            "unclassified_costs_pct": 0.0,
             "da_pct_beginning_ppe": 0.10, "capex_pct": 0.08, "sbc_pct": 0.02,
             "dso": 36.5, "dio": 45.625, "dpo": 54.75,
             "oca_pct": 0.025, "accrued_pct": 0.04, "ocl_pct": 0.03,
@@ -348,6 +350,91 @@ class TestFixtureInvariants:
             m = self._model("KO", overrides=overrides)
             assert m.checks.result("P1").status == "pass", overrides
             assert m.checks.result("P2").status == "pass", overrides
+
+
+# ── Diagnostic-pass fixes (owner-approved 2026-08-14) ────────────────────────
+
+class TestUnclassifiedCosts:
+    """Margin-identity closure: costs in no named line item are projected as
+    an explicit ratio, so projected EBIT margin reproduces the filer's own
+    historical margin structure BY IDENTITY (the MCD-class bug #2 fix)."""
+
+    def test_cost_hole_closes_margin_identity_exactly(self):
+        # Punch an MCD-shaped hole: other_operating shrinks to a token $1
+        # (real-but-tiny tag) while filed EBIT stays 250 → 49/1000 of revenue
+        # lives in no named line.
+        h = toy_history()
+        for p in h.periods:
+            p.income["other_operating"] = F(1.0)
+        a = derive_assumptions(h, toy_market())
+        assert a.eff("unclassified_costs_pct") == pytest.approx(0.049)
+        m = build_model(h, toy_market(), valuation_date=VD)
+        fy1 = m.projections[0]
+        # without the closure line this margin would be 29.9%, not 25%
+        assert (fy1.income["operating_income"] / fy1.income["revenue"]
+                == pytest.approx(0.25))
+        assert fy1.income["unclassified_costs"] == pytest.approx(49.0)
+        assert any(w.code == "unclassified_costs" for w in m.warnings)
+
+    def test_warning_names_the_percentage(self):
+        h = toy_history()
+        for p in h.periods:
+            p.income["other_operating"] = F(1.0)
+        m = build_model(h, toy_market(), valuation_date=VD)
+        w = next(w for w in m.warnings if w.code == "unclassified_costs")
+        assert "4.9%" in w.message
+        assert w.detail["unclassified_costs_pct"] == pytest.approx(0.049)
+
+    def test_below_one_percent_of_revenue_no_warning(self):
+        # 0.5%-of-revenue gap: line still projected (identity exact), but no
+        # warning — same materiality leg as H2's revenue cutoff.
+        h = toy_history()
+        for p in h.periods:
+            p.income["other_operating"] = F(45.0)
+        m = build_model(h, toy_market(), valuation_date=VD)
+        assert m.assumptions.eff("unclassified_costs_pct") == pytest.approx(0.005)
+        assert not any(w.code == "unclassified_costs" for w in m.warnings)
+
+
+class TestNegativeTerminalAnchor:
+    """Owner-approved: a perpetuity or multiple on a negative FY5 base reports
+    an honest unavailable state, never a negative 'value'. Reverse DCF stays
+    available for these filers (BA's implied recovery margin is the point)."""
+
+    def _distressed(self, ebit=-50.0):
+        # filed EBIT negative; cost lines unchanged → the identity-gap line
+        # carries the distress into the projection (margin = filed margin)
+        h = toy_history()
+        for p in h.periods:
+            p.income["operating_income"] = F(ebit)
+        return h
+
+    def test_gordon_unavailable_exit_survives(self):
+        # EBIT −5% but EBITDA_N ≈ +3% → gordon out, exit leg still a value
+        m = build_model(self._distressed(-50.0), toy_market(), valuation_date=VD)
+        assert "gordon" not in m.terminal and "gordon" not in m.bridges
+        assert "exit_multiple" in m.bridges
+        w = [w for w in m.warnings if w.code == "terminal_anchor_negative"]
+        assert len(w) == 1 and w[0].detail["leg"] == "gordon"
+        assert "wacc_x_g" not in m.sensitivity
+        assert m.checks.result("P8").status == "warn"
+
+    def test_both_legs_unavailable_builds_honestly(self):
+        # EBIT −15%: EBITDA0 < 0 → exit multiple None; FY5 NOPAT < 0 → no leg
+        m = build_model(self._distressed(-150.0), toy_market(), valuation_date=VD)
+        assert m.bridges == {} and m.terminal == {}
+        assert any(w.code == "terminal_anchor_negative" for w in m.warnings)
+        assert m.sensitivity == {}
+
+    def test_reverse_dcf_still_informative(self):
+        # the implied recovery margin must solve even when the model refuses
+        # to print a value (raw Gordon math stays available to the solver)
+        from engine.reverse import implied_assumption
+        h = self._distressed(-150.0)
+        r = implied_assumption(h, toy_market(), "ebitda_margin", VD,
+                               target_price=20.0)
+        assert r.status == "solved"
+        assert r.implied > r.derived
 
 
 # ── MSFT golden + sanity (fully offline: EDGAR + market snapshots) ───────────

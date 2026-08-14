@@ -30,6 +30,7 @@ from .wacc import build_wacc
 
 TV_SHARE_INFO = 0.85          # P8: value is mostly terminal
 LEASE_HEAVY = 0.25            # P6: operating leases vs gross debt
+UNCLASSIFIED_WARN = 0.01      # same leg as H2's revenue-materiality (owner-approved)
 WACC_STEP, G_STEP, MULT_STEP = 0.005, 0.005, 1.0
 GRID_OFFSETS = (-2, -1, 0, 1, 2)
 
@@ -195,17 +196,22 @@ def _value_per_share(history: FinancialHistory, assumptions: Assumptions,
 
 def sensitivity_grids(history: FinancialHistory, assumptions: Assumptions,
                       projections: list[ProjectedPeriod], stub: float,
-                      base_wacc: float) -> dict[str, SensitivityGrid]:
+                      base_wacc: float, gordon_available: bool = True,
+                      exit_available: bool = True) -> dict[str, SensitivityGrid]:
+    """Grids only for available legs — perturbing an unavailable leg (negative
+    terminal anchor) would print 25 variations of a sign error."""
     g0 = assumptions.eff("terminal_growth")
     waccs = [base_wacc + o * WACC_STEP for o in GRID_OFFSETS]
     gs = [g0 + o * G_STEP for o in GRID_OFFSETS]
-    grids = {"wacc_x_g": SensitivityGrid(
-        row_label="WACC", col_label="terminal g", rows=waccs, cols=gs,
-        cells=[[_value_per_share(history, assumptions, projections, stub, w,
-                                 g=g, multiple=None)
-                for g in gs] for w in waccs])}
+    grids = {}
+    if gordon_available:
+        grids["wacc_x_g"] = SensitivityGrid(
+            row_label="WACC", col_label="terminal g", rows=waccs, cols=gs,
+            cells=[[_value_per_share(history, assumptions, projections, stub, w,
+                                     g=g, multiple=None)
+                    for g in gs] for w in waccs])
     m0 = assumptions.eff("exit_multiple")
-    if m0 is not None:
+    if m0 is not None and exit_available:
         mults = [m0 + o * MULT_STEP for o in GRID_OFFSETS]
         grids["wacc_x_multiple"] = SensitivityGrid(
             row_label="WACC", col_label="exit EV/EBITDA", rows=waccs, cols=mults,
@@ -217,7 +223,7 @@ def sensitivity_grids(history: FinancialHistory, assumptions: Assumptions,
 
 def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
             wacc_build: WaccBuild, assumptions: Assumptions,
-            terminal: dict[str, TerminalLeg], ev_gordon: float,
+            terminal: dict[str, TerminalLeg], ev_gordon: float | None,
             warnings: list[EngineWarning]) -> ValidationReport:
     fy0 = history.periods[-1]
     a = assumptions
@@ -253,7 +259,8 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
     if wacc_build.beta_source == "fallback_1.0":
         p7_codes.append("beta_fallback")
 
-    tv_share = terminal["gordon"].pv / ev_gordon if ev_gordon > 0 else 0.0
+    gordon_ok = "gordon" in terminal and ev_gordon is not None and ev_gordon > 0
+    tv_share = terminal["gordon"].pv / ev_gordon if gordon_ok else None
 
     rel = 1e-8 * max(1.0, fy0.value("total_assets"))
     return ValidationReport(results=[
@@ -279,11 +286,15 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
                     detail=("Model-quality warnings: " + ", ".join(p7_codes))
                     if p7_codes else "No beta fallback, negative UFCF, or "
                                      "negative cash plug"),
-        CheckResult("P8", "info", "warn" if tv_share > TV_SHARE_INFO else "pass",
+        CheckResult("P8", "info",
+                    "warn" if tv_share is None or tv_share > TV_SHARE_INFO
+                    else "pass",
                     magnitude=tv_share,
-                    detail=f"Terminal value = {tv_share:.0%} of enterprise value"
-                           + (" — value is mostly terminal; the explicit forecast "
-                              "barely matters" if tv_share > TV_SHARE_INFO else "")),
+                    detail=("Gordon leg unavailable (negative terminal anchor) — "
+                            "terminal-value share not computable" if tv_share is None
+                            else f"Terminal value = {tv_share:.0%} of enterprise value"
+                            + (" — value is mostly terminal; the explicit forecast "
+                               "barely matters" if tv_share > TV_SHARE_INFO else ""))),
     ])
 
 
@@ -303,6 +314,17 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                      f"(uncapped CAGR {a.eff('revenue_cagr_uncapped'):.0%}) — even "
                      "fading linearly, the cumulative 5y path is aggressive; the "
                      "curved fade is a documented v1.1 candidate.")))
+    gap = a.eff("unclassified_costs_pct")
+    if abs(gap) > UNCLASSIFIED_WARN:
+        warnings.append(EngineWarning(
+            code="unclassified_costs",
+            message=(f"{gap:.1%} of revenue in operating costs is attributable "
+                     "to no named line item (revenue − EBIT − Σ named cost "
+                     "lines). Projected as an explicit unclassified-costs line "
+                     "so the projected EBIT margin reproduces the filer's "
+                     "historical margin identity — review the tag chains for "
+                     "this filer."),
+            detail={"unclassified_costs_pct": gap}))
     if a.fields["embedded_debt_rate"].derivation.startswith("IMPUTED"):
         warnings.append(EngineWarning(
             code="interest_imputed",
@@ -345,29 +367,62 @@ def build_model(history: FinancialHistory, market: MarketInputs,
             message="Negative unlevered FCF in explicit years: "
                     + ", ".join(f"FY{y.fiscal_year}" for y in schedule if y.ufcf < 0)))
 
-    roic = _resolve_roic(a, g, wacc, warnings)
-    gordon = terminal_gordon(projections, a, wacc, g, roic, stub)
-    terminal = {"gordon": gordon}
+    # Negative terminal anchors (owner-approved): a perpetuity or a multiple
+    # on a negative FY5 base is not a valuation — it is a sign error dressed
+    # as a number (KHC post-impairment, BA loss window). Each leg reports an
+    # honest unavailable state with the anchor named; the reverse DCF stays
+    # available (the implied recovery margin is informative even here).
+    fy5 = projections[-1]
+    ebitda_n = fy5.income["operating_income"] + fy5.cashflow["d_and_a"]
+    nopat_anchor = (fy5.income["operating_income"] * (1 + g)
+                    * (1 - a.eff("marginal_tax")))
+    terminal: dict[str, TerminalLeg] = {}
     crosschecks: dict[str, float] = {}
+    bridges: dict[str, Bridge] = {}
     pv_explicit = sum(y.pv for y in schedule)
-    ebitda_n = (projections[-1].income["operating_income"]
-                + projections[-1].cashflow["d_and_a"])
-    crosschecks["implied_exit_multiple"] = gordon.value_at_fyeN / ebitda_n
 
-    bridges = {"gordon": build_bridge(history, a, "gordon",
-                                      pv_explicit + gordon.pv)}
+    if nopat_anchor > 0:
+        roic = _resolve_roic(a, g, wacc, warnings)
+        gordon = terminal_gordon(projections, a, wacc, g, roic, stub)
+        terminal["gordon"] = gordon
+        crosschecks["implied_exit_multiple"] = gordon.value_at_fyeN / ebitda_n
+        bridges["gordon"] = build_bridge(history, a, "gordon",
+                                         pv_explicit + gordon.pv)
+    else:
+        warnings.append(EngineWarning(
+            code="terminal_anchor_negative",
+            message=(f"Gordon terminal value unavailable: projected FY5 EBIT is "
+                     f"{fy5.income['operating_income'] / 1e9:,.1f}B — the "
+                     "terminal NOPAT anchor is negative, and a perpetuity on a "
+                     "negative base is a sign error, not a valuation. A value "
+                     "here requires an explicit recovery view (see the reverse "
+                     "DCF, which remains available)."),
+            detail={"fy5_ebit": fy5.income["operating_income"], "leg": "gordon"}))
+
     multiple = a.eff("exit_multiple")
-    if multiple is not None:
+    if multiple is not None and ebitda_n > 0:
         exit_leg = terminal_exit(projections, multiple, wacc, stub)
         terminal["exit_multiple"] = exit_leg
-        crosschecks["implied_terminal_g"] = (
-            wacc - gordon.detail["fcf_terminal"] / exit_leg.value_at_fyeN)
+        if "gordon" in terminal:
+            crosschecks["implied_terminal_g"] = (
+                wacc - terminal["gordon"].detail["fcf_terminal"]
+                / exit_leg.value_at_fyeN)
         bridges["exit_multiple"] = build_bridge(history, a, "exit_multiple",
                                                 pv_explicit + exit_leg.pv)
+    elif multiple is not None:
+        warnings.append(EngineWarning(
+            code="terminal_anchor_negative",
+            message=(f"Exit-multiple terminal value unavailable: projected FY5 "
+                     f"EBITDA is {ebitda_n / 1e9:,.1f}B — a multiple of a "
+                     "negative EBITDA is not a value."),
+            detail={"fy5_ebitda": ebitda_n, "leg": "exit_multiple"}))
 
     checks = _checks(projections, history, wacc_build, a, terminal,
-                     bridges["gordon"].enterprise_value, warnings)
-    grids = sensitivity_grids(history, a, projections, stub, wacc)
+                     bridges["gordon"].enterprise_value
+                     if "gordon" in bridges else None, warnings)
+    grids = sensitivity_grids(history, a, projections, stub, wacc,
+                              gordon_available="gordon" in terminal,
+                              exit_available="exit_multiple" in terminal)
 
     return ModelResult(
         ticker=history.company.ticker, valuation_date=valuation_date,

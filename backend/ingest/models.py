@@ -116,10 +116,13 @@ class UnmappedTag:
 class Coverage:
     """How much of the filing landed in named line items vs. residual buckets.
 
-    Shares are 1 − |residual other_* buckets we derived| / total: a filer's own
-    tagged "other" line counts as mapped (that is their bucket); a residual WE
-    had to derive is the unmapped remainder. A falling share is the signal that
-    a filer uses tags the schema doesn't know about (spec 01).
+    Balance-sheet shares are 1 − |residual other_* buckets we derived| / total:
+    a filer's own tagged "other" line counts as mapped (that is their bucket);
+    a residual WE had to derive is the unmapped remainder. The expense share
+    additionally counts the margin-identity gap — |revenue − EBIT − Σ named
+    cost lines| — so a real-but-tiny tagged "other" line cannot mask a large
+    unmapped cost block (the MCD failure mode). A falling share is the signal
+    that a filer uses tags the schema doesn't know about (spec 01).
     Computed on the latest fiscal year.
     """
 

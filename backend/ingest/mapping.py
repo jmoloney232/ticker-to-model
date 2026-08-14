@@ -781,8 +781,19 @@ class _Mapper:
         liab_share = share(p.value("total_liabilities"),
                            residual(p.balance, ("other_current_liabilities",
                                                 "other_noncurrent_liabilities")))
+        # Expense share counts BOTH unmapped magnitudes (owner-approved fix):
+        # residuals we had to derive AND the margin-identity gap — operating
+        # costs in no named line at all. Counting only derived residuals read
+        # "E100%" over MCD's $11.5B of untagged restaurant costs, because a
+        # real-but-tiny other_operating tag blocked the residual deriver: a
+        # broken alarm, worse than no alarm.
         opex = (p.value("revenue") or 0.0) - (p.value("operating_income") or 0.0)
-        exp_share = (share(opex, residual(p.income, ("other_operating",)))
+        named_costs = (p.value("cost_of_revenue", 0.0)
+                       + p.value("research_and_development", 0.0)
+                       + p.value("selling_general_admin", 0.0)
+                       + p.value("other_operating", 0.0))
+        exp_share = (share(opex, residual(p.income, ("other_operating",))
+                           + abs(opex - named_costs))
                      if opex > 0 else None)
         rev = p.income.get("revenue")
         rev_share = 1.0 if rev is not None and rev.source == "tag" else 0.0

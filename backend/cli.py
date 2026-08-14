@@ -131,6 +131,9 @@ def render(m: ModelResult) -> str:
 
     L.append("")
     L.append("VALUE PER SHARE")
+    if not m.bridges:
+        L.append("  unavailable — negative terminal anchors on every leg "
+                 "(see warnings); the reverse DCF remains informative")
     for method, bridge in m.bridges.items():
         delta = bridge.value_per_share / price - 1
         L.append(f"  {method:<14} ${bridge.value_per_share:>10,.2f}   "
@@ -241,12 +244,16 @@ def render(m: ModelResult) -> str:
     # terminal values
     L.append("")
     L.append("TERMINAL VALUE")
-    gordon = m.terminal["gordon"]
-    d = gordon.detail
-    L.append(f"  Gordon: NOPAT(N+1) {money(d['nopat_n1'])} × (1 − RR "
-             f"{d['reinvestment_rate']:.1%} [g {d['g']:.2%} ÷ ROIC {d['roic']:.1%}])"
-             f" ÷ (WACC − g) = {money(gordon.value_at_fyeN)} → PV {money(gordon.pv)}"
-             f" (t={gordon.exponent:.2f})")
+    if "gordon" in m.terminal:
+        gordon = m.terminal["gordon"]
+        d = gordon.detail
+        L.append(f"  Gordon: NOPAT(N+1) {money(d['nopat_n1'])} × (1 − RR "
+                 f"{d['reinvestment_rate']:.1%} [g {d['g']:.2%} ÷ ROIC {d['roic']:.1%}])"
+                 f" ÷ (WACC − g) = {money(gordon.value_at_fyeN)} → PV {money(gordon.pv)}"
+                 f" (t={gordon.exponent:.2f})")
+    else:
+        L.append("  Gordon: unavailable — negative terminal NOPAT anchor "
+                 "(see warnings)")
     if "exit_multiple" in m.terminal:
         e = m.terminal["exit_multiple"]
         L.append(f"  Exit:   {e.detail['multiple']:.1f}x × EBITDA(N) "

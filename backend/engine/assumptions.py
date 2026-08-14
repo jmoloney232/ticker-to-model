@@ -112,6 +112,18 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
         add(name, _pct_of_revenue(w, item),
             f"3y mean {item} / revenue (D&A-inclusive as filed)")
 
+    # Margin-identity closure (owner-approved fix, diagnostic-pass catch):
+    # costs living in NO named line item — revenue − EBIT − Σ(named cost
+    # lines) — are projected as an explicit ratio, so the projected EBIT
+    # margin reproduces the filer's own historical margin structure by
+    # identity. Without this line, an MCD-class filer (a real-but-tiny
+    # other_operating tag blocking the residual deriver) projected an 89%
+    # EBIT margin against a real 46%.
+    add("unclassified_costs_pct", _mean([_identity_gap(p) for p in w]),
+        "3y mean (revenue − EBIT − Σ named cost lines) / revenue — the "
+        "margin-identity closure line; costs attributable to no named item, "
+        "projected explicitly (never silently absorbed into the margin)")
+
     # ── D&A memo rate (PP&E roll; % of revenue fallback) ───────────────────
     da_ratios = [(cur.value("d_and_a", 0.0), prev.value("ppe_net", 0.0))
                  for prev, cur in _prior_pairs(history)]
@@ -259,6 +271,14 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
     add("beta_adjusted", True, "Blume adjustment on (⅔β + ⅓)", unit="flag")
 
     return Assumptions(fields=a, cost_structure=cs)
+
+
+def _identity_gap(p: FiscalPeriod) -> float:
+    named = (p.value("cost_of_revenue", 0.0)
+             + p.value("research_and_development", 0.0)
+             + p.value("selling_general_admin", 0.0)
+             + p.value("other_operating", 0.0))
+    return (p.value("revenue") - p.value("operating_income") - named) / p.value("revenue")
 
 
 def _coverage(window: list[FiscalPeriod]) -> float | None:

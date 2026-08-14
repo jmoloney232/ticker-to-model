@@ -92,7 +92,8 @@ def project(history: FinancialHistory, assumptions: Assumptions
             costs += income["cost_of_revenue"]
         for name, key in (("research_and_development", "rnd_pct"),
                           ("selling_general_admin", "sga_pct"),
-                          ("other_operating", "other_opex_pct")):
+                          ("other_operating", "other_opex_pct"),
+                          ("unclassified_costs", "unclassified_costs_pct")):
             income[name] = a.eff(key) * rev
             costs += income[name]
         ebit = rev - costs

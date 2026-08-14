@@ -393,6 +393,42 @@ class TestCoverageGate:
         assert not any(w.code == "coverage_low" for w in h.warnings)
 
 
+# ── Diagnostic-pass fix (owner-approved 2026-08-14): expense coverage ────────
+
+class TestExpenseCoverageIdentityGap:
+    """The metric counted only DERIVED residuals, so a real-but-tiny tagged
+    other_operating line masked MCD's ~$11.5B of untagged restaurant costs —
+    it read E100% over the hole. A broken alarm is worse than no alarm: the
+    fixed metric also counts the margin-identity gap (revenue − EBIT − Σ named
+    cost lines) and must read LOW on MCD."""
+
+    def test_would_have_caught_mcd(self):
+        from test_fixtures_real import source_for
+        h = build_financial_history("MCD", source_for("MCD"))
+        share = h.coverage.expenses_named_share
+        assert share is not None
+        # the hole is ~80% of operating costs; anything reading above the
+        # 60% refuse-floor analogue means the alarm is still broken
+        assert share < 0.60, f"expense share {share:.0%} — MCD hole masked again"
+
+    def test_clean_filer_still_reads_fully_covered(self, clean_facts):
+        h = build_financial_history("SYN", make_source(clean_facts))
+        assert h.coverage.expenses_named_share == pytest.approx(1.0)
+
+    def test_derived_residual_still_counts_as_unmapped(self, clean_facts):
+        # by-nature filer: the residual WE derive closes the identity, so the
+        # gap term is zero — but the residual itself still counts, exactly as
+        # before the fix (no double counting, no regression)
+        gaap = clean_facts["facts"]["us-gaap"]
+        del gaap["CostOfRevenue"]
+        del gaap["GrossProfit"]
+        m = _map(clean_facts)
+        share = m.coverage.expenses_named_share
+        y = model_year(2024)
+        opex = y["revenue"] - y["oi"]
+        assert share == pytest.approx(1.0 - y["cogs"] / opex)
+
+
 # ── Final round: VZ capex chain add ──────────────────────────────────────────
 
 def test_capex_chain_includes_vz_other_productive_assets():
