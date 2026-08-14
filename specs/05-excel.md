@@ -1,108 +1,114 @@
-# Spec 05 — Excel writer
+# Spec 05 — Excel writer (as built, phase 3; owner layout approved 2026-08-14)
 
 Renders a `ModelResult` as a formula-driven workbook — **the project's #1
-non-negotiable**: clicking FY29 EBITDA must show a formula referencing other cells,
-never a pasted number. openpyxl; engine remains the source of truth via a parity test.
+non-negotiable**: clicking FY5 EBITDA must show a formula referencing other cells,
+never a pasted number. openpyxl; engine remains the source of truth via the
+round-trip gate below.
+
+**The governing rule (owner):** every calculated cell contains a live Excel formula.
+The only hardcoded values are input assumptions, market data, and reported
+historical actuals. If a value can be computed from other cells, it is computed in
+Excel, not written in by Python.
 
 ## Inputs
 
-- `ModelResult` + effective `Assumptions` (spec 04)
-- Company metadata, validation report, warnings, staleness labels (for the Cover sheet)
-- `methodology.yaml` (rendered as the Methodology sheet)
+- `ModelResult` (+ the active `Preset`, for its name and rationale)
+- `methodology.yaml` and `presets.yaml` (rendered as the Methodology sheet)
 
 ## Outputs
 
-- `.xlsx` bytes + a **cell map manifest** (JSON: engine output field → sheet!cell) used
-  by the parity test and kept out of the workbook itself.
+- `.xlsx` file + a **cell map** (`{logical key: (sheet, coordinate)}`) returned by
+  `write_workbook()` — consumed by the round-trip test; not stored in the workbook.
 
-## Workbook structure
+## Workbook structure (tab order)
 
 | Sheet | Contents | Cell nature |
 |---|---|---|
-| Cover | Company, ticker, valuation date, price + value summary, validation tie-out table, warnings, data staleness labels | Labels + literals |
-| Methodology | Every convention: default, derivation, tradeoff (from methodology.yaml) | Text |
-| Assumptions | Every assumption grouped (growth, margins, working capital, capital intensity, taxes, WACC, terminal value, toggles); each row: label, **input cell (named range)**, derivation text, default value, **provenance** (derived / preset:&lt;name&gt; / user). **Header block prints the active preset's name and one-line rationale** (from `engine/presets.yaml`) so the workbook is self-documenting about which stated methodology produced its inputs (owner contract, 2026-08-14) | **Inputs (blue)** |
-| Hist IS / Hist BS / Hist CF | As-ingested history with fiscal-year columns; provenance notes (tag, restated flag) as cell comments | Data literals |
-| Projections | Full three-statement model FY1–FY5 | **Formulas only** |
-| DCF | WACC build (coverage → spread → Kd; Ke; weights), UFCF schedule, discount factors, both TVs, implied cross-checks, EV→equity bridge, value per share | **Formulas only** |
-| Sensitivity | Two 5×5 grids (WACC × g, WACC × multiple) | **Formulas only** |
+| Cover | Company/ticker/meta, valuation date, price, headline per-share values with vs-price deltas, WACC, implied cross-checks, **active preset + rationale**, **live checks summary**, **full warnings block** (inherited ingest + market + engine, unmapped items grouped), staleness labels, color-convention legend | Formulas referencing Valuation + text |
+| Assumptions | One row per assumption: label, **value (named range, blue on yellow)**, unit, **provenance (derived / preset:<name> / user)**, derived default (when it differs), derivation/rule text. Grouped: market data, growth, cost structure, capital intensity, working capital, taxes, payout, interest, cost of capital, terminal, exit & bridge, toggles. This sheet is the control panel — changing any cell moves every downstream number | **Inputs (blue)** |
+| Historical | As-reported IS/BS/CF, fiscal-year columns, FYE date row; a computed gross-debt row (formula). Unmapped (zero_logged) items: gray-italic 0 **plus the warning text in the notes column** — never a bare zero indistinguishable from a real one; ingest-derived values italic with a note; absent items blank | Actuals (blue literals) |
+| Model | FY0 **anchor column of live `=N(Historical!…)` links (green)** + FY1–FY5 projected IS / BS / CF, all driven by named ranges: growth & tax fade rows, D&A-inclusive cost lines incl. the unclassified-costs closure, beginning-balance interest, held-flat lines as `=$B$row`, the unattributed-carryforward line computed from anchors, **cash as the plug**, indirect CF. Ends with the **LIVE CHECKS block**: per-year BS tie and CF tie rows plus OK/FAIL summary formulas (tolerance $1) | **Formulas only** |
+| Valuation | WACC build-up (nested-IF synthetic-spread lookup generated from the engine's `SPREAD_TABLE` — parity by construction; live `kd_synthetic` toggle), stub/exponent cells from `valuation_date` − `fy0_end`, UFCF schedule referencing Model, both TVs **with semantic guards in the formulas**, implied cross-checks, EV→equity bridge ×2 legs, per-share | **Formulas only** |
+| Sensitivity | Two live 5×5 grids re-centering on current assumptions. **WACC × g re-projects per g column** (growth path fades INTO g — engine semantics) via visible, labeled helper blocks (growth/revenue/EBIT/capex/D&A/PP&E/NWC/ΔNWC/UFCF per g, + NOPAT₆ row); each grid cell is a self-contained `SUMPRODUCT(ufcf, POWER(1+w,−t)) + TV + bridge_adj)/shares` formula referencing its row/column headers. WACC × multiple re-prices the base projection. Unavailable legs → explanatory text, no grid | **Formulas only** |
+| Methodology | Every convention (default/derivation/tradeoff) from methodology.yaml + every preset (title/rationale/field rules) from presets.yaml | Text |
 
-Structural separation (inputs / calculations / outputs) is by sheet, reinforced by
-styling within sheets.
+## Named-range scheme (owner-approved)
 
-## Formula rules
+**The named range for each assumption is the engine field name verbatim** —
+`terminal_growth`, `capex_pct`, `dso`, `beta`, `midyear`, `sbc_addback`, … — one
+identifier across engine, CLI, provenance, methodology, and workbook. Extras:
+`market_price`, `valuation_date` (Assumptions) and `fy0_end` (Historical). All
+workbook-scoped, absolute. Booleans are TRUE/FALSE cells consumed via `IF(...)`
+(`midyear`, `sbc_addback`, `kd_synthetic` are live toggles; `beta_adjusted` is
+documentation-only — its state is baked into the effective `beta` at generation,
+stated in its derivation column, because re-deriving Blume in-sheet would
+double-apply preset/override beta logic).
 
-- Every cell on Projections, DCF, and Sensitivity is a formula referencing named ranges
-  and other cells. The **only literals** in the workbook are: assumption inputs,
-  historical facts, market inputs, and labels.
-- **Named ranges** (workbook-scoped) for every assumption: `RevGrowth_Y1`…`RevGrowth_Y5`,
-  `GrossMargin`, `RnD_Pct`, `SGA_Pct`, `DA_PctPPE`, `Capex_Pct`, `DSO`, `DIO`, `DPO`,
-  `TaxEffective`, `TaxMarginal`, `PayoutRatio`, `CashYield`, `Beta`, `ERP`, `RiskFree`,
-  `TerminalG`, `ROIC_Terminal`, `ExitMultiple`, `CashFloorPct`, `ValuationDate`,
-  `MidYear` (0/1), `SBCAddback` (0/1), plus `WACC` on the DCF sheet.
-- **Function whitelist:** arithmetic, `^`, `SUM`, `SUMPRODUCT`, `IF`, `MIN`, `MAX`,
-  `ABS`. No volatile functions — **`TODAY()` is banned**; `ValuationDate` is a stamped
-  literal so the workbook reproduces the app's numbers forever. No `NPV` (it can't
-  express stub/mid-year exponents). The writer hard-fails on a non-whitelisted function
-  (`UnsupportedFunctionError`) — this also guarantees the parity engine can evaluate
-  everything.
-- **No circular references, ever.** Guaranteed upstream by beginning-of-period interest
-  (spec 04); asserted here by a graph check at write time. The workbook must never
-  prompt for iterative calculation.
-- Toggles enter formulas arithmetically, e.g. discount exponent
-  `=(t_N) - 0.5*MidYear` and SBC line `... + SBCAddback * SBC_t` — so flipping a named
-  cell between 0/1 live-updates the whole model in Excel.
-- Sensitivity cells are **self-contained formulas** (openpyxl cannot create Excel
-  what-if data tables): each cell rebuilds PV as
-  `SUMPRODUCT(UFCF_row, (1+wacc_cell)^(-exponent_row)) + TV(wacc_cell, g_or_mult)
-  * (1+wacc_cell)^(-tv_exponent)` referencing its row/column headers, so the grid stays
-  live when a user edits any assumption.
-- `wb.calculation.fullCalcOnLoad = True` — openpyxl stores formulas without cached
-  values; this forces Excel to compute on open (cells would otherwise show 0/blank).
+## Semantic guards live in the formulas
 
-## Styling (standard modeling conventions — the finance-literate reviewer will check)
+The engine's unavailable states are not special-cased at write time — the same
+conditions are encoded in the formulas, so user edits reproduce engine behavior:
 
-- **Blue font on light-yellow fill = input** (assumptions and any overridable cell).
-- **Black = formula** within the sheet; **green = reference to another sheet**.
-- Historical data styled as data (black, no fill) with provenance comments.
-- Money in $ millions, 1 decimal; percentages 1 decimal; shares in millions; negative
-  numbers in parentheses; year columns labeled FY2024A / FY2025E etc. (A = actual,
-  E = estimate).
-- Frozen panes: header row + label column on every statement sheet.
+- Gordon TV: `IF(NOPAT₆≤0, "unavailable — negative terminal NOPAT anchor", IF(g≥WACC,
+  "blocked — terminal g must be below WACC", …))`; exit TV guards `exit_multiple`
+  blank and `EBITDA₅≤0`. Text propagates via `ISNUMBER` wrappers through EV → equity
+  → per-share — **never an Excel error value**, whether at generation or after a
+  breaking user edit. Cover carries live `g<WACC` and `RR<1` checks.
+- ROIC fallback: `IF(OR(terminal_roic="", terminal_roic≤g), WACC, terminal_roic)` —
+  the sheet reproduces the engine's value-neutral fallback (and the same logic per
+  sensitivity cell at that cell's WACC).
 
-## Invariants
+## Technical constraints (owner)
 
-- Zero literals on calculation sheets (scripted check over the manifest).
-- Every named range defined, workbook-scoped, and referenced at least once.
-- No external links, no VBA, no volatile functions.
-- Cell-graph is acyclic (no iterative calc).
-- Deterministic output: identical inputs → byte-identical workbook (zip timestamps
-  normalized) — makes golden-file testing possible.
+No macros, no external links, no volatile functions (no OFFSET/INDIRECT/TODAY —
+`valuation_date` is a stamped input), no circular references, no iterative
+calculation, no dynamic-array-only functions. Function set actually used: arithmetic,
+`SUM`, `SUMPRODUCT`, `POWER`, `IF`, `AND`, `OR`, `MIN`, `MAX`, `ABS`, `N`,
+`ISNUMBER`, `TEXT` — recalculates in Excel, Google Sheets, and LibreOffice.
+`fullCalcOnLoad` set (openpyxl stores no cached values). ~40KB typical, no images.
+
+## Styling
+
+Blue = hardcoded input/actual (assumption cells additionally light-yellow fill);
+black = formula; green = pure cross-sheet link; gray-italic = unmapped-zero;
+section headers bold on gray. USD millions via comma-scaled formats, negatives in
+parentheses, percent/multiple/days/per-share formats per unit, frozen panes on
+every data sheet, gridlines off, FY columns labeled `FY2025` / `FY2026E`.
 
 ## Error cases
 
-| Error | Trigger |
-|---|---|
-| `UnsupportedFunctionError` | A formula uses a non-whitelisted function (drift guard) |
-| `CircularReferenceError` | Cycle detected in the write-time graph check |
-| `ManifestMismatchError` | An engine output field has no mapped cell or vice versa |
+Generation is deterministic from `ModelResult`; failures are Python exceptions at
+write time (missing history rows resolve to honest `=0` anchors via `N()`;
+None-valued assumptions render as blank inputs consumed by the `=""` guards).
 
-## How tested
+## How tested (the owner's phase gate — unit tests are NOT sufficient)
 
-- **Parity test (the big one):** for every fixture ticker × toggle combination
-  {mid-year on/off} × {SBC on/off} × {Kd synthetic/embedded}: write the workbook, load
-  it with the `formulas` Python library, compute all cells, and diff every manifest cell
-  against `ModelResult` at relative tolerance 1e-6. Fallback recalc engine (documented,
-  used only if `formulas` lacks a needed function — which the whitelist prevents):
-  LibreOffice headless re-save with forced recalculation.
-- **Mid-year TV discount test:** workbook PV(TV_gordon) shifts by exactly
-  (1+WACC)^0.5 when `MidYear` flips; PV(TV_exit) does not move. (Guards the deliberate
-  asymmetry — worth 2–4% of value.)
-- **Live-edit test:** programmatically change `RevGrowth_Y1` in the saved workbook,
-  recalc, and assert FY1 revenue, EBITDA, and value per share all move — proves the
-  model is genuinely live, not decorative formulas over pasted values.
-- **Structure tests:** whitelist scan, acyclicity, named-range completeness,
-  zero-literals-on-calc-sheets, `fullCalcOnLoad` set.
-- **Manual QA checklist** (once per release): open in real Excel — no repair dialog, no
-  iterative-calc prompt, values match dashboard, click-through of five random formula
-  cells reads sensibly.
+Both gates run against **LibreOffice headless** (`soffice --headless --convert-to
+xlsx`), a real spreadsheet engine, verified to honor `fullCalcOnLoad` by probe.
+If LibreOffice is absent the tests **skip loudly stating the gate did not run** —
+never silently substituted with a weaker check.
+
+1. **Round-trip parity:** for MSFT (clean, by_function), MCD (by_nature +
+   unclassified-costs + lease warnings), GOOGL (share_count_derived): write →
+   recalculate → read back → diff every mapped cell against the engine at rel 1e-6
+   (abs floor 1e-4): all Model statement rows × FY1–5, the full UFCF schedule, WACC
+   build, both TVs and bridges, both grids cell-by-cell (engine `None` ↔ `"—"`),
+   and the live checks reading OK. Plus KHC: unavailable exit leg renders as
+   explanatory text, Gordon's negative-equity value matches the engine, zero Excel
+   error values anywhere.
+2. **Liveness:** edit `terminal_growth` in the saved file → recalc → per-share
+   equals the engine under the same override (exact expected amount, not just
+   direction); same for a cost-ratio edit, the SBC toggle, and the **mid-year
+   toggle** (Gordon exponent moves, exit exponent doesn't — the deliberate
+   asymmetry held live). A breaking edit (g=20%) flips the sheet to "blocked" text
+   and the Cover check to FAIL, with no error values.
+
+The round-trip subsumes the old write-time graph check: LibreOffice recalculation
+with matching values is not possible with circular references or unsupported
+functions.
+
+## Interface
+
+`python -m cli TICKER --excel PATH [--preset NAME] [--set k=v ...]` — same
+derive → preset → override layering and provenance as every other surface.
+`write_workbook(model, path, preset=None)` from `backend/excel/`.

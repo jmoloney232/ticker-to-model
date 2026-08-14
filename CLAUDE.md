@@ -39,12 +39,14 @@ Build and verify each phase before starting the next.
 |---|---|---|
 | 0 | Specs, schema, methodology | done (owner-reviewed) |
 | 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done — 130 tests, 9 real-filing fixtures; final scan: 23/27 non-financials build, DE coverage-refused, GE spin-year isolated, XOM+NEE honestly rejected; limitations in docs/known-limitations.md** |
-| 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | **built — market module + engine + CLI; 185 tests incl. hand-computed micro-case, P1–P4 invariants + fuzz on real filers, MSFT golden (frozen), market-cap sanity band; awaiting owner review of CLI output** |
-| 3 | `backend/excel/` — formula-driven workbook | not started |
+| 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | done (owner-reviewed) — incl. reverse DCF, diagnostic fixes (margin-identity closure, negative-anchor guards), assumption presets with provenance |
+| 3 | `backend/excel/` — formula-driven workbook | **built — 7 sheets, engine-field-named ranges, live checks, semantic guards in formulas; gated by LibreOffice round-trip (MSFT/MCD/GOOGL cell-diff vs engine, KHC unavailable-states) + liveness tests; awaiting owner review** |
 | 4 | `backend/app/` + `frontend/` — API, dashboard, download | not started |
 
 Dev: `cd backend && .venv/bin/python -m pytest` (venv via `python3 -m venv .venv` +
-`pip install httpx pyyaml pytest ruff`). Fixture refresh:
+`pip install httpx pyyaml pytest ruff openpyxl`). The Excel round-trip gate needs
+LibreOffice (`brew install --cask libreoffice`); without it those tests skip
+loudly and the phase 3 gate has NOT run. Fixture refresh:
 `EDGAR_USER_AGENT=... python -m ingest.snapshot MSFT KO COST KHC JPM`.
 
 ## Architecture

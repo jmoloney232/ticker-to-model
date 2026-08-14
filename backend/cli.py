@@ -311,7 +311,8 @@ def render(m: ModelResult, preset: Preset | None = None) -> str:
 
 def run(ticker: str, edgar_source, market_provider,
         overrides: dict | None = None, valuation_date: date | None = None,
-        as_json: bool = False, preset_name: str | None = None) -> str:
+        as_json: bool = False, preset_name: str | None = None,
+        excel_path: str | None = None) -> str:
     vd = valuation_date or market_today()
     history = build_financial_history(ticker, edgar_source)
     market = build_market_inputs(ticker, market_provider, as_of=vd)
@@ -327,9 +328,15 @@ def run(ticker: str, edgar_source, market_provider,
                                    history, market, vd)
     result = build_model(history, market, valuation_date=vd,
                          overrides=overrides, assumptions=assumptions)
+    if excel_path:
+        from excel import write_workbook  # openpyxl import deferred to use
+        write_workbook(result, excel_path, preset=preset)
     if as_json:
         return json.dumps(dataclasses.asdict(result), default=str, indent=2)
-    return render(result, preset=preset)
+    out = render(result, preset=preset)
+    if excel_path:
+        out += f"\nWorkbook written: {excel_path}\n"
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -349,6 +356,10 @@ def main(argv: list[str] | None = None) -> int:
                              "(explicit --preset/--set win on conflict)")
     parser.add_argument("--encode-set", action="store_true",
                         help="print the compact code for this preset+overrides")
+    parser.add_argument("--excel", default=None, metavar="PATH",
+                        help="write the formula-driven workbook to PATH "
+                             "(same preset/override layering as the terminal "
+                             "output)")
     parser.add_argument("--json", action="store_true",
                         help="dump the full ModelResult as JSON")
     parser.add_argument("--valuation-date", type=date.fromisoformat, default=None)
@@ -381,7 +392,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         print(run(args.ticker, edgar, provider, overrides or None,
-                  args.valuation_date, args.json, preset_name=preset_name))
+                  args.valuation_date, args.json, preset_name=preset_name,
+                  excel_path=args.excel))
     except (IngestError, MarketDataError, EngineError) as exc:
         print(exc.user_message, file=sys.stderr)
         return 1
