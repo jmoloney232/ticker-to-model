@@ -137,6 +137,7 @@ libreoffice`); without it they skip loudly rather than pass quietly.
 | `backend/app/` | FastAPI layer — routes, serialization, cache; no valuation logic |
 | `frontend/` | React/TypeScript dashboard (design tokens + adherence lint) |
 | `backend/tests/fixtures/` | Committed EDGAR/market snapshots (tests + last-resort fallback) |
+| `docs/financial-assumptions.md` | **The audit guide** — every financial assumption, its derivation, and what to challenge |
 | `docs/known-limitations.md` | What breaks, why, and what fixing it would take |
 
 ## Scope (v1)
