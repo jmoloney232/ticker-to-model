@@ -3,7 +3,7 @@
 Validation is a first-class feature (non-negotiable #3): never silently produce a model
 that doesn't tie. This spec owns the check definitions, tolerances, severities, and
 surfacing. Checks run in two places: the **historical gate** inside ingest (spec 01,
-step 7) and the **projection invariants** inside the engine (spec 04).
+step 8) and the **projection invariants** inside the engine (spec 04).
 
 ## Inputs
 
@@ -23,7 +23,7 @@ banner (spec 06) and the workbook Cover table (spec 05).
 | ID | Check | Severity |
 |---|---|---|
 | H1 | **Balance sheet balances:** total assets = total liabilities + total equity (incl. NCI + preferred) | fail |
-| H2 | **Cash flow ties:** CFO + CFI + CFF + FX effect = Δcash. **Three distinguishable outcomes (owner decision):** `pass` — ties to the BS cash delta directly; `warn` — a *definitional* mismatch: ties only under a broader cash definition (restricted cash / disposal-group variants), or the filer's own reported net-change ties while our narrower BS cash delta does not (verified AMZN/TSLA/F/WMT); `fail` — ties to nothing: a real break. The detail says which outcome and why | fail |
+| H2 | **Cash flow ties:** CFO + CFI + CFF + FX effect = Δcash. **Four distinguishable per-year outcomes (owner decisions), recorded structurally in `CheckResult.outcomes` — never collapsed into one warning type:** `tie` — reconciles within tolerance; `definitional` — ties only under a broader cash definition (restricted cash / disposal-group variants), or the filer's reported net-change ties while our narrower BS cash delta does not (verified WMT); `immaterial` — an unreconciled residual survives every basis but is below **both materiality legs (1% of revenue AND 5% of gross \|CFO\|+\|CFI\|+\|CFF\|, owner-approved 2026-08-13)** — quantified per year in dollars and both percentages, disclosed in the detail and as an `immaterial_cash_residual` warning (the auditor's treatment; verified AMZN/TSLA/F/DIS at ≤0.73% of revenue); `fail` — the residual exceeds a leg: a real break (verified GE FY2022, 1.27% of revenue). The materiality test covers both the Δ-side residual and the internal \|flows − reported net change\| residual — the same FX/restricted-cash quirk breaks both by the same amount on the verified filers, and a materially inconsistent CF statement fails on either | fail |
 | H3 | **Net income consistency:** `NetIncomeLoss` + NCI income = `ProfitLoss` where both were reported. Honest note: `companyfacts` facts are statement-agnostic, so the classic "NI matches between IS and CF" is reframed as tag-level consistency (H3) plus the roll-forward (H4) | fail |
 | H4 | **Retained-earnings roll-forward (soft):** RE_t ≈ RE_{t−1} + NI_t − dividends_t. Legitimately noisy (share retirements, some OCI reclassifications, ASU adoptions hit RE directly) → warn-only | warn |
 | H5 | **Schema cross-checks** (from spec 02): reported vs derived gross profit; reported vs derived total liabilities; sum of mapped current assets vs reported total | warn |
@@ -34,6 +34,11 @@ banner (spec 06) and the workbook Cover table (spec 05).
 dollars, but composite/derived items (schema `derive:` rules) introduce residues;
 below this threshold is mapping noise, above it is a real problem. **H4:** warn when
 the residual exceeds 5% of total equity. **H5:** warn above the H1 tolerance.
+**H2 materiality band** (between tolerance and failure): `H2_MATERIALITY_REV = 1%`
+of the year's revenue and `H2_MATERIALITY_FLOWS = 5%` of the year's gross flows —
+both must hold. Calibrated on the 29-ticker scan so real presentation quirks
+($0.1–1.3B against hundreds of billions of revenue) are disclosed while GE's
+structural spin-year break still fails.
 
 A `fail` blocks the model: ingest raises `ValidationError` carrying the report — the
 user sees which identity broke, by how much, in which year, with per-item provenance
@@ -106,6 +111,13 @@ reported checks), not as user-facing states; CI treats any occurrence as a bug.
   breaking exactly one identity (assets off by 2%, CF missing FX effect, NCI
   inconsistency) → the right check fails with the right magnitude; nothing else fires.
 - **Tolerance boundary tests:** residues just under / just over `max($1M, 0.1%·assets)`.
+- **H2 materiality band:** a sub-materiality break yields `immaterial` with the
+  quantified warning; an above-band break fails; the flows leg binds independently of
+  the revenue leg (inflated-revenue synthetic); definitional and immaterial outcomes
+  co-exist distinguishably in one report; GE's real filing fails on exactly FY2022.
+- **Coverage gate (spec 01 step 7):** DE-shaped coverage refuses with the residual
+  buckets named; NVDA-shaped coverage builds with `coverage_low`; the gate reads
+  min(assets, liabilities); clean filers pass silently.
 - **KHC:** H6 warns on the restated years with the recorded deltas.
 - **COST:** H7 info on the 53-week year; P6 lease warning fires.
 - **Skipped-check tests:** remove retained earnings → H4 reports `skipped`, not `pass`.

@@ -121,7 +121,7 @@ weaken.
 | deferred_taxes_cf | | DeferredIncomeTaxExpenseBenefit → DeferredIncomeTaxesAndTaxCredits | zero_logged |
 | working_capital_change | | IncreaseDecreaseInOperatingCapital | derive: CFO − NI − non-cash items |
 | cash_from_operations | ✓ | NetCashProvidedByUsedInOperatingActivities → …ContinuingOperations | — |
-| capex | ✓ | PaymentsToAcquirePropertyPlantAndEquipment → PaymentsToAcquireProductiveAssets | — |
+| capex | ✓ | PaymentsToAcquirePropertyPlantAndEquipment → PaymentsToAcquireProductiveAssets → PaymentsToAcquireOtherProductiveAssets (VZ FY2019+, verified $17.0B FY2025) | — |
 | acquisitions | | PaymentsToAcquireBusinessesNetOfCashAcquired | zero_logged |
 | cash_from_investing | ✓ | NetCashProvidedByUsedInInvestingActivities → …ContinuingOperations | — |
 | dividends_paid | | PaymentsOfDividends → PaymentsOfDividendsCommonStock | zero_logged |

@@ -38,7 +38,7 @@ Build and verify each phase before starting the next.
 | Phase | Module | Status |
 |---|---|---|
 | 0 | Specs, schema, methodology | done (owner-reviewed) |
-| 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done + hardened — 118 tests, 9 real-filing fixtures, 29-ticker bulk scan (20/27 non-financials build); awaiting owner review of re-scan** |
+| 1 | `backend/ingest/` — EDGAR fetch, tag mapping, periods, validation | **done — 130 tests, 9 real-filing fixtures; final scan: 23/27 non-financials build, DE coverage-refused, GE spin-year isolated, XOM+NEE honestly rejected; limitations in docs/known-limitations.md** |
 | 2 | `backend/engine/` + `backend/market/` — projections, WACC, DCF | not started |
 | 3 | `backend/excel/` — formula-driven workbook | not started |
 | 4 | `backend/app/` + `frontend/` — API, dashboard, download | not started |
@@ -123,8 +123,19 @@ deliberately; never let them drift silently.**
   totals (NVDA) map to `investments_combined_unsplit`, excluded from net debt by
   default with disclosure.
 - **Split adjustments:** share/EPS-unit recasts are labeled splits, not restatements.
-- **Known-unsupported list:** `ingest/known_unsupported.yaml` (XOM — extension-tag
-  filer) returns an honest message, never a generic error.
+- **Known-unsupported list:** `ingest/known_unsupported.yaml` (XOM, NEE —
+  extension-tag filers) returns an honest message, never a generic error.
+- **H2 materiality band (owner decision):** an unreconciled cash residual below
+  1% of revenue AND 5% of gross flows builds with a distinct per-year quantified
+  `immaterial` outcome + `immaterial_cash_residual` warning; above either leg it
+  fails. Applied to both the Δ-cash and reported-net-change residuals. Verified:
+  AMZN/TSLA/F/DIS build; GE FY2022 (spin year, 1.27% of revenue) still fails.
+- **Coverage gate (owner decision):** min(assets, liabilities) named-share < 60%
+  refuses with the largest unattributed balances named (DE); 60–85% builds behind
+  a hard, non-dismissible `coverage_low` warning (NVDA).
+- **Known-limitations doc:** `docs/known-limitations.md` — what breaks, why, and
+  what fixing it would require (GE spin year, extension-tag filers, MCD lessee
+  leases, captive finance). Deliberate asset, kept current.
 
 ## Scope guardrails (v1)
 

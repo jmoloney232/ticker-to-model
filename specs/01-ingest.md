@@ -23,7 +23,8 @@ restatement resolution, and the validation gate. Knows nothing about valuation.
 - `provenance`: per (period, item): tag used, accession, filed date, form type,
   `was_restated: bool`, `restatement_delta_pct` when applicable
 - `warnings`: structured list (unmapped optional items, restatements >1%, 53-week years,
-  cross-check mismatches) — flows through engine to UI and workbook
+  cross-check mismatches, `coverage_low`, `immaterial_cash_residual`) — flows through
+  engine to UI and workbook
 - `validation`: the spec 07 report (must be status=pass or pass-with-warnings),
   including the PL plausibility warnings
 - `cost_structure`: `by_function` (COGS/gross profit exist) or `by_nature` (no COGS
@@ -40,7 +41,8 @@ restatement resolution, and the validation gate. Knows nothing about valuation.
   tagged "other" line counts as mapped), plus the top unmapped us-gaap tags by
   absolute magnitude. Surfaced in the web app as "N% of reported line items
   mapped". **A falling coverage number is the signal that a filer uses tags the
-  schema doesn't know about** — it is the early-warning metric for chain gaps
+  schema doesn't know about** — it is the early-warning metric for chain gaps.
+  Enforced by the coverage gate (step 7): refuse below 60%, hard warning below 85%
 
 ## Pipeline
 
@@ -49,7 +51,9 @@ restatement resolution, and the validation gate. Knows nothing about valuation.
 `ingest/known_unsupported.yaml` (data file, never hardcoded) lists filers whose
 conventions we cannot honestly support yet, with the reason shown verbatim to the
 user (`KnownUnsupportedError`) instead of a generic failure. Current: XOM (annual
-statements under custom extension tags — extension-taxonomy support is a later phase).
+income statement under custom extension tags), NEE (capex under custom extension
+tags — a regulated-utility presentation). Extension-taxonomy support is a later
+phase; diagnoses in `docs/known-limitations.md`.
 
 ### 1. Ticker → CIK
 
@@ -159,11 +163,34 @@ missing only in the *oldest* years trims the window (`history_trimmed_required`
 warning, 3-year floor); missing in a recent year still hard-errors — we keep the most
 recent run in which every required item resolves.
 
-### 7. Validation gate
+### 7. Coverage gate (owner-approved 2026-08-13)
+
+A filer that builds badly is more dangerous than one that fails, because nothing
+signals the user to distrust it. Gate on `min(assets_named_share,
+liabilities_named_share)`:
+
+- **< 60%** → `InsufficientCoverageError`: no valuation. The message is diagnostic —
+  it names the largest unattributed balances (the derived residual buckets, then the
+  biggest unmapped balance-sheet tags) with magnitudes. Verified: DE (20%/18% — a
+  captive-finance balance sheet; see `docs/known-limitations.md`).
+- **60–85%** → builds behind a `coverage_low` warning stating both shares and the
+  largest unattributed balances. **UI contract (spec 06): rendered as a hard,
+  non-dismissible banner.** Verified: NVDA (73% assets, dominated by the disclosed
+  unsplit-investments item).
+- **≥ 85%** → clean.
+
+Floors calibrated on the 29-ticker scan, where the distribution is bimodal (DE at
+20%, then nothing until 73%): 60% separates most-of-the-balance-sheet disasters from
+real but bounded gaps. Constants live in `ingest/assemble.py`; mirrored in
+methodology.yaml.
+
+### 8. Validation gate
 
 Run spec 07 tie-outs on the assembled history. `fail`-severity → `ValidationError`
 carried to the user with the failing identity, magnitudes, and per-item provenance —
-loud, specific, never a silently-untied model.
+loud, specific, never a silently-untied model. H2's immaterial-residual band (spec
+07) additionally surfaces an `immaterial_cash_residual` warning in the assembled
+output quantifying each affected year in dollars and percentages.
 
 ## Invariants
 
@@ -185,6 +212,7 @@ loud, specific, never a silently-untied model.
 | `UnsupportedCurrencyError` | No USD facts | Clear unsupported message |
 | `InsufficientHistoryError` | <3 usable fiscal years, or a gap | Explains what was found |
 | `MissingRequiredItemError` | Required item unmappable | Names item + tags tried |
+| `InsufficientCoverageError` | min(assets, liabilities) named-share < 60% | Names the largest unattributed balances + magnitudes |
 | `ValidationError` | Spec 07 fail | Shows failing tie-out + values |
 | `EdgarUnavailableError` | Network/5xx after retries **and** no cache/snapshot | Graceful "try later" state (the one allowed dead end, spec 00) |
 
