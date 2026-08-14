@@ -361,6 +361,16 @@ degenerate *derived* value falls back to ROIC = WACC with a warning — reinvest
 earning exactly its cost adds zero value from growth, the honest neutral stance when
 history can't support an estimate.
 
+**Excess-return persistence is a stance, and it's flagged.** Holding historical
+ROIC in perpetuity asserts *permanent* excess returns; Damodaran's stable-growth
+guidance is the opposite (excess returns decay, ROC → cost of capital), though his
+own Little Book leaves room for durable moats — so the default stays historical.
+The `terminal_roic_fade` toggle (default off) sets ROIC_t to the midpoint of
+derived ROIC and WACC to express the decay view; an explicit user/preset ROIC
+always wins over the toggle. Whenever derived ROIC exceeds WACC by more than 10
+percentage points, an info-level `terminal_excess_return_persistent` flag names
+the spread — whichever way the toggle is set.
+
 Discounting: with mid-year on, the Gordon TV discounts at `t_N − 0.5` — perpetual
 flows arrive *through* each year.
 

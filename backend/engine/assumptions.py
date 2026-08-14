@@ -299,6 +299,13 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
         "universe carry an actual agency rating the engine does not yet "
         "ingest (see known-limitations)", unit="flag")
     add("beta_adjusted", True, "Blume adjustment on (⅔β + ⅓)", unit="flag")
+    add("terminal_roic_fade", False,
+        "OFF (default): terminal ROIC holds the 3y historical level in "
+        "perpetuity — permanent excess returns, defensible for durable moats "
+        "but an assertion. ON: ROIC_t = midpoint(derived ROIC, WACC) — excess "
+        "returns decay toward the cost of capital at stable growth "
+        "(Damodaran's stated guidance for stable-growth firms). An explicit "
+        "user/preset ROIC always wins over the toggle", unit="flag")
 
     return Assumptions(fields=a, cost_structure=cs)
 

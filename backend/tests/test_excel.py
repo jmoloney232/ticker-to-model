@@ -267,6 +267,17 @@ class TestLiveness:
         assert got > m.bridges["gordon"].value_per_share
         assert close(got, expected)
 
+    def test_terminal_roic_fade_toggle_is_live(self, tmp_path):
+        # audit task 6: the fade toggle must move the sheet exactly as the
+        # engine says — ROIC_t to the midpoint with WACC, value down
+        m, cmap, wb = self._edited(tmp_path, {"terminal_roic_fade": True})
+        expected = build_model(m.history, m.market, valuation_date=GOLDEN_VD,
+                               overrides={"terminal_roic_fade": True}
+                               ).bridges["gordon"].value_per_share
+        got = wb["Valuation"][cmap["val:ps_gordon"][1]].value
+        assert got < m.bridges["gordon"].value_per_share
+        assert close(got, expected)
+
     def test_midyear_toggle_asymmetry_is_live(self, tmp_path):
         # mid-year OFF: Gordon PV moves by (1+WACC)^0.5 in the exponent while
         # the exit TV keeps its full-period discount — the deliberate

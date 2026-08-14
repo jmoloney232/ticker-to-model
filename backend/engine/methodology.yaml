@@ -198,6 +198,15 @@ conventions:
       g/ROIC makes terminal growth cost what it should. Requires g/ROIC_t < 1 (hard).
       The WACC fallback (reinvestment earns exactly its cost) adds zero value from
       growth — the honest neutral stance when the data can't support an estimate.
+      Holding historical ROIC in perpetuity asserts PERMANENT excess returns —
+      Damodaran's stable-growth guidance is the opposite (excess returns decay
+      toward zero, ROC toward the cost of capital), though his own Little Book
+      allows room for durable competitive advantages, so the default stays
+      historical. The terminal_roic_fade toggle (default off) sets ROIC_t to the
+      midpoint of derived ROIC and WACC; an explicit user/preset ROIC always wins.
+      When derived ROIC exceeds WACC by more than 10pp, an info-level
+      terminal_excess_return_persistent flag names the spread regardless of the
+      toggle.
 
   - id: exit_multiple
     label: Exit multiple terminal value

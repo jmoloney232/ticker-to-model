@@ -12,7 +12,9 @@
   },
   "cost_of_equity": 0.10042666568006212,
   "coverage": 46.97144905029268,
-  "engine_warning_codes": [],
+  "engine_warning_codes": [
+    "terminal_excess_return_persistent"
+  ],
   "ev_exit": 4450672399067.465,
   "ev_gordon": 2027614262385.5723,
   "fy1_ebit": 176034523380.99832,

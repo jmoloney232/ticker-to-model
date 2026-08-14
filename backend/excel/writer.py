@@ -114,7 +114,8 @@ ASSUMPTION_GROUPS = [
     ("Terminal value", ["terminal_growth", "terminal_growth_rf_ceiling",
                         "terminal_roic"]),
     ("Exit & bridge", ["exit_multiple", "share_count", "cash_floor_pct"]),
-    ("Toggles", ["midyear", "sbc_addback", "kd_synthetic", "beta_adjusted"]),
+    ("Toggles", ["midyear", "sbc_addback", "kd_synthetic", "beta_adjusted",
+                 "terminal_roic_fade"]),
 ]
 
 
@@ -833,9 +834,12 @@ class _Writer:
                        "nopat6",
                        f"={ebit5}*(1+terminal_growth)*(1-marginal_tax)")
         r = self._vrow(ws, r, "ROIC used (derived; falls back to WACC when "
-                              "unavailable or ≤ g)", "roic",
+                              "unavailable or ≤ g; terminal_roic_fade → "
+                              "midpoint with WACC)", "roic",
                        f'=IF(OR(terminal_roic="",terminal_roic<='
-                       f"terminal_growth),{V['wacc']},terminal_roic)", FMT_PCT)
+                       f"terminal_growth),{V['wacc']},"
+                       f"IF(terminal_roic_fade,(terminal_roic+{V['wacc']})/2,"
+                       "terminal_roic))", FMT_PCT)
         r = self._vrow(ws, r, "Reinvestment rate RR = g / ROIC", "rr",
                        f"=terminal_growth/{V['roic']}", FMT_PCT)
         guard = (f'IF({V["nopat6"]}<=0,"unavailable — negative terminal NOPAT '
@@ -990,7 +994,8 @@ class _Writer:
                     u = ufcf_rows[j]
                     n6 = f"{get_column_letter(2 + j)}${n6_row}"
                     roic = (f'IF(OR(terminal_roic="",terminal_roic<={g}),'
-                            f"{w},terminal_roic)")
+                            f"{w},IF(terminal_roic_fade,"
+                            f"(terminal_roic+{w})/2,terminal_roic))")
                     formula = (
                         f'=IF({g}>={w},"—",'
                         f"(SUMPRODUCT($C${u}:${last}${u},POWER(1+{w},"

@@ -334,6 +334,39 @@ class TestTerminalGrowthChecks:
         assert "terminal_growth_rf_ceiling" in DISPLAY_ONLY
 
 
+class TestTerminalRoicFade:
+    """Audit task 6: the excess-return-decay view as an option, never the
+    silent default; persistence flagged either way."""
+
+    def test_toggle_off_holds_historical_roic(self):
+        m = toy_model()
+        assert m.terminal["gordon"].detail["roic"] == pytest.approx(187.5 / 900)
+
+    def test_toggle_on_uses_midpoint_and_lowers_gordon(self):
+        base = toy_model()
+        faded = toy_model(overrides={"terminal_roic_fade": True})
+        want = (187.5 / 900 + faded.wacc.wacc) / 2
+        assert faded.terminal["gordon"].detail["roic"] == pytest.approx(want)
+        # lower ROIC_t → higher reinvestment rate → smaller terminal value
+        assert (faded.bridges["gordon"].value_per_share
+                < base.bridges["gordon"].value_per_share)
+
+    def test_stated_roic_beats_the_toggle(self):
+        m = toy_model(overrides={"terminal_roic_fade": True,
+                                 "terminal_roic": 0.30})
+        assert m.terminal["gordon"].detail["roic"] == pytest.approx(0.30)
+
+    def test_persistence_flag_fires_regardless_of_toggle(self):
+        # toy derived ROIC 20.8% vs WACC 6.86% → spread 14pp > 10pp
+        for ov in (None, {"terminal_roic_fade": True}):
+            m = toy_model(overrides=ov)
+            flags = [w for w in m.warnings
+                     if w.code == "terminal_excess_return_persistent"]
+            assert flags and flags[0].severity == "info"
+            assert flags[0].detail["spread"] == pytest.approx(
+                187.5 / 900 - m.wacc.wacc)
+
+
 class TestReinvestmentFadeMismatch:
     """Audit task 5: warn — never auto-fade — when growth-era capex is
     carried into a near-mature final year."""

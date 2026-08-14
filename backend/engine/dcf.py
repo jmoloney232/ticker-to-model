@@ -45,6 +45,9 @@ TV_SHARE_INFO = 0.80          # P8 — published guidance: typical TV is 60–80
 # depreciation; the street_convention preset is the opinionated fade.
 REINVEST_FADE_RATIO = 1.5
 REINVEST_FADE_G_BAND = 0.01
+EXCESS_RETURN_INFO = 0.10     # audit task 6: derived terminal ROIC more than
+                              # 10pp above WACC → the model is asserting
+                              # persistent excess returns (info flag)
 LEASE_HEAVY = 0.25            # P6: operating leases vs gross debt
 UNCLASSIFIED_WARN = 0.01      # same leg as H2's revenue-materiality (owner-approved)
 WACC_STEP, G_STEP, MULT_STEP = 0.005, 0.0025, 1.0
@@ -108,6 +111,12 @@ def _resolve_roic(assumptions: Assumptions, g: float, wacc: float,
                          "from history (invested capital ≤ 0 or ROIC ≤ g)."),
                 detail={"derived_roic": field.value}))
         return wacc
+    if assumptions.eff("terminal_roic_fade"):
+        # midpoint of derived ROIC and WACC — excess-return decay toward the
+        # cost of capital at stable growth (audit task 6; default OFF because
+        # permanent moats are defensible too). Midpoint > g holds: both
+        # inputs exceed g here (derived checked above, WACC > g by the block).
+        return (field.value + wacc) / 2
     return field.value
 
 
@@ -417,6 +426,22 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                          "plan implies financing v1 does not model (no revolver); "
                          "review payout and capex assumptions.")))
             break
+
+    derived_roic = a.fields["terminal_roic"].value
+    if (derived_roic is not None
+            and derived_roic - wacc > EXCESS_RETURN_INFO):
+        fade_on = bool(a.eff("terminal_roic_fade"))
+        warnings.append(EngineWarning(
+            code="terminal_excess_return_persistent", severity="info",
+            message=(f"Derived terminal ROIC {derived_roic:.1%} exceeds WACC "
+                     f"{wacc:.1%} by {derived_roic - wacc:.1%}. "
+                     + ("terminal_roic_fade is ON: ROIC_t is set to the "
+                        "midpoint of the two, so half that excess persists."
+                        if fade_on else
+                        "The model is assuming those excess returns persist "
+                        "in perpetuity (terminal_roic_fade is off).")),
+            detail={"derived_roic": derived_roic, "wacc": wacc,
+                    "spread": derived_roic - wacc}))
 
     fy_last, fy_prev = projections[-1], projections[-2]
     capex_n = fy_last.cashflow["capex"]
