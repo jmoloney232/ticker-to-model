@@ -260,3 +260,27 @@ conventions:
     derivation: "Raw bars turn a split into a fake return that destroys the beta regression; staleness is shown wherever cached data is used"
     editable: false
     tradeoff: "SPY (investable, dividend-inclusive via total-return approximation limits disclosed) vs. the index itself: immaterial for beta at this scope."
+
+  - id: cash_reconciliation_materiality
+    label: Cash-flow reconciliation materiality
+    category: data
+    default: "An unreconciled cash residual below 1% of revenue AND 5% of gross cash flows is disclosed per year (dollars and percentages), not fatal; above either leg the model refuses to build"
+    derivation: "The auditor's treatment of an immaterial difference: quantify, disclose, move on. 1% of revenue is the top of the standard audit materiality range; the flows leg catches residuals small vs revenue but large vs actual cash movement. Calibrated on a 29-filer scan (owner-approved)"
+    editable: false
+    tradeoff: >
+      Strict zero-tolerance rejects real filers over $1B FX/restricted-cash
+      presentation quirks against $600B of revenue; a loose threshold would wave
+      through structural breaks (GE's spin year, at 1.27% of revenue, still fails).
+      Residuals are always visible — disclosure is the mechanism, not forgiveness.
+
+  - id: coverage_gate
+    label: Balance-sheet coverage gate
+    category: data
+    default: "Below 60% of assets or liabilities mapped to named line items: no valuation, with the largest unattributed balances named. 60–85%: builds behind a hard, non-dismissible warning"
+    derivation: "Coverage = share of the latest balance sheet attributable to named items rather than derived residual buckets; floors calibrated on a 29-filer scan where the distribution is bimodal (owner-approved)"
+    editable: false
+    tradeoff: >
+      A filer that builds badly is more dangerous than one that fails — nothing
+      signals distrust. The gate refuses captive-finance balance sheets (Deere: 20%
+      mapped) rather than valuing a fifth of a company, while bounded gaps (NVIDIA:
+      73%, dominated by a disclosed combined-investments line) build with a warning.

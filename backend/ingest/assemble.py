@@ -14,17 +14,29 @@ import yaml
 from .edgar import EdgarSource
 from .errors import (
     FinancialCompanyError,
+    InsufficientCoverageError,
     KnownUnsupportedError,
     MissingRequiredItemError,
     ValidationFailedError,
 )
 from .facts import iter_raw_facts, select_latest
-from .mapping import map_history
+from .mapping import MappedHistory, map_history
 from .models import CompanyMeta, Fact, FinancialHistory, IngestWarning
 from .schema import load_schema
 from .validation import validate_history
 
 KNOWN_UNSUPPORTED_PATH = Path(__file__).parent / "known_unsupported.yaml"
+
+# Coverage gate (owner-approved 2026-08-13), on min(assets, liabilities)
+# named-share. Calibrated on the 29-ticker scan, where the distribution is
+# bimodal: DE at 20%/18% (a captive-finance balance sheet our chains don't
+# know), then nothing until NVDA at 73%, then ≥86%. The 60% floor separates
+# most-of-the-balance-sheet disasters from real but bounded gaps; the 60–85%
+# band builds behind a hard, non-dismissible warning (UI contract, spec 06) —
+# a filer that builds badly is more dangerous than one that fails, because
+# nothing tells the user to distrust it.
+COVERAGE_REFUSE_FLOOR = 0.60
+COVERAGE_WARN_FLOOR = 0.85
 
 
 @lru_cache(maxsize=1)
@@ -48,6 +60,73 @@ def _reject_financial(ticker: str, name: str, sic: int | None) -> None:
     for sic_range, category in _SIC_CATEGORIES:
         if sic in sic_range:
             raise FinancialCompanyError(ticker, name, sic, category)
+
+
+def _largest_unattributed(mapped: MappedHistory, limit: int = 6) -> list[str]:
+    """The residual buckets we had to derive, largest first, then the biggest
+    unmapped balance-sheet tags as candidates for where the value actually is."""
+    p = mapped.periods[-1]
+    buckets = [(abs(f.value), f"{name} ${f.value / 1e9:.1f}B (derived residual)")
+               for name in ("other_current_assets", "other_noncurrent_assets",
+                            "other_current_liabilities", "other_noncurrent_liabilities")
+               if (f := p.balance.get(name)) is not None and f.source == "derived"
+               and abs(f.value) > 0.0]
+    out = [label for _, label in sorted(buckets, reverse=True)]
+    out += [f"unmapped tag {u.tag} ${u.value / 1e9:.1f}B"
+            for u in mapped.coverage.top_unmapped if u.shape == "instant"][:3]
+    return out[:limit]
+
+
+def _coverage_gate(ticker: str, mapped: MappedHistory) -> None:
+    cov = mapped.coverage
+    gate = min(cov.assets_named_share, cov.liabilities_named_share)
+    if gate >= COVERAGE_WARN_FLOOR:
+        return
+    largest = _largest_unattributed(mapped)
+    if gate < COVERAGE_REFUSE_FLOOR:
+        raise InsufficientCoverageError(ticker, cov.assets_named_share,
+                                        cov.liabilities_named_share,
+                                        COVERAGE_REFUSE_FLOOR, largest)
+    mapped.warnings.append(IngestWarning(
+        code="coverage_low",
+        message=(f"Only {cov.assets_named_share:.0%} of assets / "
+                 f"{cov.liabilities_named_share:.0%} of liabilities map to named "
+                 f"line items (clean-build floor: {COVERAGE_WARN_FLOOR:.0%}). "
+                 f"Defaults derived from residual buckets deserve scrutiny. "
+                 f"Largest unattributed: {'; '.join(largest)}."),
+        detail={"assets_named_share": cov.assets_named_share,
+                "liabilities_named_share": cov.liabilities_named_share,
+                "warn_floor": COVERAGE_WARN_FLOOR}))
+
+
+def _immaterial_residual_warning(report, mapped: MappedHistory) -> IngestWarning | None:
+    """Surface H2's immaterial unreconciled residuals as a structured warning
+    in the assembled output (owner requirement: dollars, percentage, and
+    affected years visible to the UI — not buried in a log)."""
+    h2 = report.result("H2")
+    if h2 is None:
+        return None
+    years = sorted(fy for fy, o in h2.outcomes.items() if o == "immaterial")
+    if not years:
+        return None
+    lines = []
+    for p in mapped.periods:
+        if p.fiscal_year not in years:
+            continue
+        resid = h2.per_period[p.fiscal_year]
+        gross = (abs(p.value("cash_from_operations"))
+                 + abs(p.value("cash_from_investing"))
+                 + abs(p.value("cash_from_financing")))
+        lines.append(f"FY{p.fiscal_year}: ${resid / 1e9:.2f}B = "
+                     f"{resid / p.value('revenue'):.2%} of revenue, "
+                     f"{resid / gross:.2%} of gross cash flows")
+    return IngestWarning(
+        code="immaterial_cash_residual",
+        message=("Cash flow statement leaves an unreconciled residual below the "
+                 "materiality threshold — quantified and disclosed, not fatal: "
+                 + "; ".join(lines)),
+        detail={"years": years,
+                "residuals": {fy: h2.per_period[fy] for fy in years}})
 
 
 def build_financial_history(ticker: str, source: EdgarSource,
@@ -75,6 +154,7 @@ def build_financial_history(ticker: str, source: EdgarSource,
     payload, facts_tier = source.get_companyfacts(cik)
     schema = load_schema()
     mapped = map_history(payload, schema, company.fye_anchor, ticker, years)
+    _coverage_gate(ticker, mapped)
 
     shares_item = schema.items["shares_outstanding"]
     shares_current = None
@@ -110,6 +190,9 @@ def build_financial_history(ticker: str, source: EdgarSource,
     report = validate_history(mapped)
     if report.overall == "fail":
         raise ValidationFailedError(ticker, report)
+    imm = _immaterial_residual_warning(report, mapped)
+    if imm is not None:
+        mapped.warnings.append(imm)
 
     return FinancialHistory(
         company=company,

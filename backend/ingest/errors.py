@@ -73,6 +73,26 @@ class ValidationFailedError(IngestError):
         self.report = report
 
 
+class InsufficientCoverageError(IngestError):
+    """Coverage gate (owner-approved 2026-08-13): too little of the balance
+    sheet maps to named line items to value honestly. The message is
+    diagnostic — it names the largest unattributed balances — not generic."""
+
+    def __init__(self, ticker: str, assets_share: float, liabilities_share: float,
+                 floor: float, largest: list[str]):
+        largest_str = "; ".join(largest) or "n/a"
+        super().__init__(
+            f"{ticker} maps only {assets_share:.0%} of assets and "
+            f"{liabilities_share:.0%} of liabilities to named line items "
+            f"(floor: {floor:.0%}). A valuation built from that little of the "
+            f"balance sheet would be confidently wrong, so none is produced. "
+            f"Largest unattributed balances: {largest_str}.",
+            {"ticker": ticker, "assets_named_share": assets_share,
+             "liabilities_named_share": liabilities_share, "floor": floor,
+             "largest_unattributed": largest},
+        )
+
+
 class KnownUnsupportedError(IngestError):
     """Filer on the known-unsupported list (ingest/known_unsupported.yaml)."""
 

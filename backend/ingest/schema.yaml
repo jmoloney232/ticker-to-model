@@ -629,6 +629,9 @@ items:
     tags:
       - PaymentsToAcquirePropertyPlantAndEquipment
       - PaymentsToAcquireProductiveAssets
+      - PaymentsToAcquireOtherProductiveAssets   # VZ FY2019+ (verified $17.0B
+        # FY2025; VZ filed PaymentsToAcquireProductiveAssets only through 2018,
+        # so its recent years resolve here — owner-approved chain add)
     notes: "Positive outflow per sign_conventions."
 
   - name: acquisitions

@@ -80,6 +80,11 @@ class CheckResult:
     tolerance: float | None = None
     detail: str = ""
     per_period: dict[int, float] = field(default_factory=dict)
+    outcomes: dict[int, str] = field(default_factory=dict)
+    # Per-fiscal-year disposition labels for checks with more than pass/fail
+    # semantics (H2: tie | definitional | immaterial | fail — owner decision:
+    # the three non-fail dispositions must be separately identifiable by the
+    # UI, never collapsed into one warning type). Empty for binary checks.
 
 
 @dataclass

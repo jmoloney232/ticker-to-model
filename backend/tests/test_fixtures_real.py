@@ -198,21 +198,25 @@ class TestWMT:
 
 
 class TestGE:
-    """KNOWN LIMITATION, pinned deliberately: GE's FY2022 cash flow (the GE
-    HealthCare spin) presents continuing-operations flows against cash totals
-    that include discontinued operations — a presentation the H2 alternates
-    don't yet reconcile. The COGS-optional policy fixed GE's original blocker;
-    this documents the next one honestly instead of papering over it.
-    Candidate future fix: discontinued-operations flow composites (needs owner
-    approval — it's a new schema policy, not an approved chain add)."""
+    """KNOWN LIMITATION, pinned deliberately (docs/known-limitations.md): GE's
+    FY2022 cash flow (the GE HealthCare spin) presents continuing-operations
+    flows against cash totals that include discontinued operations. The H2
+    materiality band now isolates it precisely: every other year's residual is
+    immaterial (≤0.5% of revenue, quantified), but the spin year's $0.37B is
+    1.27% of as-restated revenue — above the 1% leg, and rightly so: it is a
+    structural presentation break, not noise. Candidate future fix:
+    discontinued-operations flow composites (needs owner approval — a new
+    schema policy, not a chain add)."""
 
-    def test_fails_h2_on_discontinued_ops_flows_for_now(self):
+    def test_fails_h2_only_on_the_spin_year(self):
         from ingest.errors import ValidationFailedError
         with pytest.raises(ValidationFailedError) as exc:
             build_financial_history("GE", source_for("GE"))
         h2 = exc.value.report.result("H2")
         assert h2.status == "fail"
-        assert 2022 in h2.per_period      # the spin year is the break
+        assert h2.outcomes[2022] == "fail"          # the spin year, materially
+        others = {fy: o for fy, o in h2.outcomes.items() if fy != 2022}
+        assert others and set(others.values()) <= {"immaterial", "definitional", "tie"}
 
 
 class TestJPM:

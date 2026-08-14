@@ -8,3 +8,10 @@
     that standard us-gaap chains cannot see (verified: annual revenue absent
     from every standard revenue tag in its companyfacts). Extension-taxonomy
     support is a later phase.
+
+- ticker: NEE
+  reason: >
+    NextEra Energy files capital expenditures only under company-specific
+    extension tags (verified: no standard us-gaap capex tag carries a value in
+    any year — a regulated-utility presentation). Capex is required for a DCF,
+    and extension-taxonomy support is a later phase.

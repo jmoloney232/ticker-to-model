@@ -15,6 +15,17 @@ ABS_TOLERANCE = 1_000_000.0          # $1M
 REL_TOLERANCE = 0.001                # 0.1% of total assets
 RE_ROLLFORWARD_REL = 0.05            # H4: 5% of total equity
 
+# H2 materiality (owner-approved 2026-08-13): an unreconciled cash residual
+# below BOTH legs is quantified and disclosed, not fatal — the auditor's
+# treatment of an immaterial difference. 1% of revenue is the top of the
+# standard audit materiality range for revenue-benchmarked entities; the
+# gross-flows leg catches residuals that are small against revenue but large
+# against the actual cash movement (calibrated on the 29-ticker scan: passes
+# AMZN/TSLA/F/DIS at ≤0.73% rev / ≤3.86% flows; still fails GE's FY2022
+# spin-year break at 1.27% of revenue).
+H2_MATERIALITY_REV = 0.01            # of the year's revenue
+H2_MATERIALITY_FLOWS = 0.05          # of the year's |CFO| + |CFI| + |CFF|
+
 
 def _tol(assets: float | None) -> float:
     return max(ABS_TOLERANCE, REL_TOLERANCE * abs(assets or 0.0))
@@ -56,76 +67,131 @@ def _h1(periods: list[FiscalPeriod]) -> CheckResult:
 def _h2(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
     """Cash flow ties to the change in cash.
 
-    Owner decision (item 2): a DEFINITIONAL mismatch — the CF statement
-    reconciles a broader cash total (restricted cash, disposal groups) than the
-    balance-sheet cash line — is not the same thing as a clean tie, and not the
-    same thing as a break. Three distinguishable outcomes:
-      pass  — flows tie to the balance-sheet cash delta directly
-      warn  — flows tie only under an alternate cash definition, or the filer's
-              own reported net-change ties while our BS cash delta does not
-              (definition mismatch; detail says which; verified AMZN/TSLA/F/WMT)
-      fail  — flows tie to nothing: a real break
+    Four distinguishable per-year dispositions (`outcomes`), never collapsed
+    into one warning type (owner decisions, hardening items 2 and this round's
+    materiality item):
+      tie          — flows tie to a cash delta or the reported net change
+                     within tolerance
+      definitional — ties only under a broader cash definition (restricted
+                     cash / disposal groups), or the filer's reported net
+                     change ties while our narrower BS cash delta does not
+                     (verified WMT); a definition mismatch, not a break
+      immaterial   — an unreconciled residual survives every basis but is
+                     below BOTH materiality legs (H2_MATERIALITY_REV of
+                     revenue and H2_MATERIALITY_FLOWS of gross flows);
+                     quantified per year in dollars and percentages and
+                     disclosed — the auditor's treatment, not a free pass
+                     (verified AMZN/TSLA/F/DIS: FX / restricted-cash
+                     presentation quirks of $0.1–1.3B against hundreds of
+                     billions of revenue)
+      fail         — the residual exceeds a materiality leg: a real break
+                     (verified GE FY2022, the HealthCare-spin year)
+
+    The materiality test covers both residual measures — the Δcash side and
+    the internal |flows − reported net change| side — because on the verified
+    filers the same FX/restricted-cash quirk breaks both by the same amount;
+    a materially inconsistent CF statement still fails on either.
+    `per_period` records what remains unreconciled after the best accepted
+    basis: ≤ tolerance for tie/definitional years, the disclosed unexplained
+    amount for immaterial/fail years.
     """
-    per, ran = {}, False
+    per: dict[int, float] = {}
+    outcomes: dict[int, str] = {}
+    ran = False
     hard_fail = False
-    mismatch_notes = []
+    def_notes, imm_notes, fail_notes = [], [], []
     for i, p in enumerate(periods):
+        fy = p.fiscal_year
         flows = (p.value("cash_from_operations") + p.value("cash_from_investing")
                  + p.value("cash_from_financing") + p.value("fx_effect", 0.0))
+        gross = (abs(p.value("cash_from_operations"))
+                 + abs(p.value("cash_from_investing"))
+                 + abs(p.value("cash_from_financing")))
         tol = _tol(p.value("total_assets"))
 
+        residuals = []                  # every basis we could reconcile against
         ncc = p.cashflow.get("net_change_in_cash")
-        ncc_tied = None
+        r_ncc = None
         if ncc is not None and ncc.source == "tag":
             ran = True
-            resid = abs(flows - ncc.value)
-            per[p.fiscal_year] = max(per.get(p.fiscal_year, 0.0), resid)
-            ncc_tied = resid <= tol
-            if not ncc_tied:
-                hard_fail = True        # the filer's own CF is internally inconsistent
+            r_ncc = abs(flows - ncc.value)
+            residuals.append(r_ncc)
+        excess_ncc = r_ncc if r_ncc is not None and r_ncc > tol else 0.0
 
         if i > 0:
             prior_cash = periods[i - 1].value("cash_and_equivalents")
             prior_alt = m.alt_cash.get(periods[i - 1].fiscal_year)
         else:
             prior_cash, prior_alt = m.prior_cash, m.prior_alt_cash
-        if prior_cash is None:
-            continue
-        ran = True
-        resid = abs((p.value("cash_and_equivalents") - prior_cash) - flows)
-        per[p.fiscal_year] = max(per.get(p.fiscal_year, 0.0), resid)
-        if resid <= tol:
-            continue
 
-        alt_now = m.alt_cash.get(p.fiscal_year)
-        if alt_now is not None and prior_alt is not None:
-            alt_resid = abs((alt_now - prior_alt) - flows)
-            if alt_resid <= tol:
-                mismatch_notes.append(
-                    f"FY{p.fiscal_year}: ties under the broader cash definition "
-                    "(restricted cash / disposal groups — ASU 2016-18 style "
-                    "definition mismatch, not a break)")
-                continue
-        if ncc_tied:
-            mismatch_notes.append(
-                f"FY{p.fiscal_year}: the filer's reported net change ties to its "
-                "flows, but the balance-sheet cash line uses a narrower "
-                "definition than the CF total (definition mismatch, not a break)")
+        excess_delta = 0.0
+        definitional = None
+        if prior_cash is not None:
+            ran = True
+            r_delta = abs((p.value("cash_and_equivalents") - prior_cash) - flows)
+            residuals.append(r_delta)
+            if r_delta > tol:
+                alt_now = m.alt_cash.get(fy)
+                r_alt = None
+                if alt_now is not None and prior_alt is not None:
+                    r_alt = abs((alt_now - prior_alt) - flows)
+                    residuals.append(r_alt)
+                if r_alt is not None and r_alt <= tol:
+                    definitional = ("ties under the broader cash definition "
+                                    "(restricted cash / disposal groups — ASU "
+                                    "2016-18 style definition mismatch, not a break)")
+                elif r_ncc is not None and r_ncc <= tol:
+                    definitional = ("the filer's reported net change ties to its "
+                                    "flows, but the balance-sheet cash line uses "
+                                    "a narrower definition than the CF total "
+                                    "(definition mismatch, not a break)")
+                else:
+                    excess_delta = min(r for r in (r_delta, r_alt) if r is not None)
+
+        if not residuals:
+            continue                    # nothing to reconcile this year
+
+        unexplained = max(excess_ncc, excess_delta)
+        per[fy] = unexplained if unexplained > 0.0 else min(residuals)
+        if unexplained == 0.0:
+            if definitional is not None:
+                outcomes[fy] = "definitional"
+                def_notes.append(f"FY{fy}: {definitional}")
+            else:
+                outcomes[fy] = "tie"
             continue
-        hard_fail = True
+        rev = p.value("revenue")
+        quantified = (f"FY{fy}: ${unexplained/1e9:.2f}B unreconciled = "
+                      f"{unexplained/rev:.2%} of revenue, "
+                      f"{unexplained/gross:.2%} of gross cash flows")
+        if (unexplained <= H2_MATERIALITY_REV * rev
+                and unexplained <= H2_MATERIALITY_FLOWS * gross):
+            outcomes[fy] = "immaterial"
+            imm_notes.append(quantified)
+        else:
+            outcomes[fy] = "fail"
+            hard_fail = True
+            fail_notes.append(quantified + " — exceeds the materiality threshold "
+                              f"({H2_MATERIALITY_REV:.0%} of revenue and "
+                              f"{H2_MATERIALITY_FLOWS:.0%} of gross flows)")
 
     if not ran:
         return CheckResult("H2", "fail", "skipped",
                            detail="No reported net-change-in-cash and no prior-year "
                                   "balance to difference against.")
     detail = "CFO + CFI + CFF + FX = change in cash"
-    if mismatch_notes:
-        detail += "; DEFINITIONAL: " + "; ".join(mismatch_notes)
-    status = "fail" if hard_fail else ("warn" if mismatch_notes else "pass")
+    if def_notes:
+        detail += "; DEFINITIONAL: " + "; ".join(def_notes)
+    if imm_notes:
+        detail += "; IMMATERIAL: " + "; ".join(imm_notes)
+    if fail_notes:
+        detail += "; MATERIAL: " + "; ".join(fail_notes)
+    status = ("fail" if hard_fail
+              else "warn" if def_notes or imm_notes else "pass")
     return CheckResult("H2", "fail", status,
                        magnitude=_worst(per),
                        tolerance=_tol(periods[-1].value("total_assets")),
-                       detail=detail, per_period=per)
+                       detail=detail, per_period=per, outcomes=outcomes)
 
 
 def _h3(periods: list[FiscalPeriod], m: MappedHistory) -> CheckResult:
