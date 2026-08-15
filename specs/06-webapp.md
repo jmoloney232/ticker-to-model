@@ -31,9 +31,14 @@ no valuation logic in this layer. `backend/app/` = `main.py` (routes, DI),
 `filing_basis` from FY0 provenance) · `market` (price/rf/beta with staleness) ·
 `preset` (name/title/rationale) · `assumptions`: per field `{name, label, value,
 unit, provenance: derived|preset:<name>|user, derived_default, rule, editable}` ·
-`provenance_counts` · `valuation.gordon / .exit_multiple`: `{available: true,
-value_per_share, vs_price, enterprise_value, equity_value, tv_*, tv_share_of_ev,
-bridge[]}` **or** `{available: false, reason: {code, message, detail}}` ·
+`provenance_counts` · `valuation`: an **ordered list** of methods from the
+engine's registry (`gordon`, `exit_multiple`, `epv` — order server-owned), each
+`{id, label, note, available: true, value_per_share, vs_price,
+enterprise_value, equity_value, detail: [{key, label, unit, value}], bridge[]}`
+**or** `{id, label, note, available: false, reason: {code, message, detail}}` —
+the UI iterates and never names legs in rendering code ·
+`growth`: `{available, state: positive|value_destructive|unavailable, per_share,
+share_of_dcf, text}` — the server-written value-of-growth sentence ·
 `wacc` (full build-up) · `ufcf` · `projections` · `crosschecks` · `sensitivity`
 (grids, null cells for g ≥ WACC) · `checks` (P1–P8) · `warnings` **structured**
 `[{origin, code, message, fiscal_year, item, detail}]` — every inherited stream,

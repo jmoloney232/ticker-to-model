@@ -146,8 +146,18 @@ def assert_roundtrip(m, cmap, wb) -> None:
         e = m.terminal["exit_multiple"]
         check("val:tv_exit", e.value_at_fyeN)
         check("val:pv_exit", e.pv)
-        check("val:ps_exit", m.bridges["exit_multiple"].value_per_share)
+        check("val:ps_exit_multiple", m.bridges["exit_multiple"].value_per_share)
         check("val:implied_g", m.crosschecks["implied_terminal_g"])
+    if "epv" in m.bridges:
+        fy0 = m.history.periods[-1]
+        margin = m.assumptions.eff("epv_margin")
+        check("val:epv_ebit", fy0.value("revenue") * margin)
+        check("val:ev_epv", m.bridges["epv"].enterprise_value)
+        check("val:ps_epv", m.bridges["epv"].value_per_share)
+    if m.growth.available:
+        check("val:growth_ps", m.growth.per_share)
+        if m.growth.share_of_dcf is not None:
+            check("val:growth_share", m.growth.share_of_dcf)
     bridge = next(iter(m.bridges.values()), None)
     if bridge is not None:
         by_name = {i.name: i.value for i in bridge.items}
@@ -208,7 +218,7 @@ class TestRoundTrip:
         wb = recalc(path)
         tv_exit = wb["Valuation"][cmap["val:tv_exit"][1]].value
         assert isinstance(tv_exit, str) and "unavailable" in tv_exit
-        ps_exit = wb["Valuation"][cmap["val:ps_exit"][1]].value
+        ps_exit = wb["Valuation"][cmap["val:ps_exit_multiple"][1]].value
         assert isinstance(ps_exit, str)
         assert close(wb["Valuation"][cmap["val:ps_gordon"][1]].value,
                      m.bridges["gordon"].value_per_share)
@@ -297,10 +307,26 @@ class TestLiveness:
         expected = build_model(m.history, m.market, valuation_date=GOLDEN_VD,
                                overrides={"midyear": False})
         got_g = wb["Valuation"][cmap["val:ps_gordon"][1]].value
-        got_x = wb["Valuation"][cmap["val:ps_exit"][1]].value
+        got_x = wb["Valuation"][cmap["val:ps_exit_multiple"][1]].value
         assert close(got_g, expected.bridges["gordon"].value_per_share)
         assert close(got_x, expected.bridges["exit_multiple"].value_per_share)
         assert got_g < m.bridges["gordon"].value_per_share
+        # the EPV cell shares the timing convention, so it moves too — live
+        got_e = wb["Valuation"][cmap["val:ps_epv"][1]].value
+        assert close(got_e, expected.bridges["epv"].value_per_share)
+
+    def test_epv_margin_edit_is_live(self, tmp_path):
+        # editing the EPV margin moves EPV and the growth line to exactly
+        # the engine's values, and leaves the DCF legs untouched
+        m, cmap, wb = self._edited(tmp_path, {"epv_margin": 0.30})
+        expected = build_model(m.history, m.market, valuation_date=GOLDEN_VD,
+                               overrides={"epv_margin": 0.30})
+        got = wb["Valuation"][cmap["val:ps_epv"][1]].value
+        assert close(got, expected.bridges["epv"].value_per_share)
+        assert close(wb["Valuation"][cmap["val:growth_ps"][1]].value,
+                     expected.growth.per_share)
+        assert close(wb["Valuation"][cmap["val:ps_gordon"][1]].value,
+                     m.bridges["gordon"].value_per_share)
 
 
 class TestGuardsGoLiveInExcel:

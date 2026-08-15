@@ -15,7 +15,7 @@ from __future__ import annotations
 import dataclasses
 
 from engine.assumptions import DISPLAY_ONLY
-from engine.models import Bridge, ModelResult, TerminalLeg
+from engine.models import Bridge, MethodResult, ModelResult
 from engine.presets import Preset, encode_assumption_set
 from engine.reverse import ImpliedResult
 
@@ -62,6 +62,7 @@ PLAIN_LABELS = {
     "payout_ratio": "Dividend payout ratio",
     "share_count": "Share count (diluted)",
     "cash_floor_pct": "Operating cash floor (% of revenue)",
+    "epv_margin": "EPV margin (no-growth EBIT margin)",
 }
 
 
@@ -183,7 +184,7 @@ def verdict_text(company_name: str, terminal_growth: float, price: float,
     if exit_multiple["available"]:
         v = exit_multiple["value_per_share"]
         side = "below" if exit_multiple["vs_price"] < 0 else "above"
-        mult = exit_multiple["tv_detail"].get("multiple")
+        mult = _mdetail(exit_multiple, "multiple")
         mult_str = f"its {mult:.1f}× exit multiple" if mult else "an exit multiple"
         text = (f"{lead} On {mult_str} the model gets {_dollars(v)} a share "
                 f"— {_gap(exit_multiple['vs_price'])} {side} the {p} price.")
@@ -246,36 +247,61 @@ def warnings_out(m: ModelResult) -> list[dict]:
     return out
 
 
-def _leg(m: ModelResult, method: str, price: float) -> dict:
-    if method in m.terminal:
-        leg: TerminalLeg = m.terminal[method]
-        bridge: Bridge = m.bridges[method]
-        ev = bridge.enterprise_value
-        return {
-            "available": True,
-            "value_per_share": bridge.value_per_share,
-            "vs_price": bridge.value_per_share / price - 1,
-            "enterprise_value": ev,
-            "equity_value": bridge.equity_value,
-            "tv_at_fyeN": leg.value_at_fyeN,
-            "tv_pv": leg.pv,
-            "tv_exponent": leg.exponent,
-            "tv_share_of_ev": leg.pv / ev if ev > 0 else None,
-            "tv_detail": dict(leg.detail),
-            "bridge": [{"name": i.name, "value": i.value, "source": i.source,
-                        "note": i.note} for i in bridge.items],
-        }
-    # honest unavailable state, reason attached (owner rule: data, not error)
-    for w in m.warnings:
-        if w.code == "terminal_anchor_negative" and w.detail.get("leg") == method:
-            return {"available": False,
-                    "reason": {"code": "terminal_anchor_negative",
-                               "message": w.message, "detail": dict(w.detail)}}
-    return {"available": False,
-            "reason": {"code": "exit_multiple_unavailable",
-                       "message": "No exit multiple — FY0 EBITDA ≤ 0, so a "
-                                  "current EV/EBITDA cannot be derived.",
-                       "detail": {}}}
+def method_out(mr: MethodResult, price: float) -> dict:
+    """One registry entry → one JSON object. Deliberately generic: no method
+    ids appear here, so adding a fourth method never touches this function
+    (contract-tested with a stub method)."""
+    base = {"id": mr.id, "label": mr.label, "note": mr.note}
+    if not mr.availability.available:
+        # honest unavailable state, reason attached (owner rule: data, not error)
+        base.update({
+            "available": False,
+            "reason": {"code": mr.availability.reason_code,
+                       "message": mr.availability.reason, "detail": {}},
+        })
+        return base
+    bridge: Bridge = mr.bridge
+    base.update({
+        "available": True,
+        "value_per_share": bridge.value_per_share,
+        "vs_price": bridge.value_per_share / price - 1,
+        "enterprise_value": mr.enterprise_value,
+        "equity_value": bridge.equity_value,
+        "detail": [{"key": d.key, "label": d.label, "unit": d.unit,
+                    "value": d.value} for d in mr.detail],
+        "bridge": [{"name": i.name, "value": i.value, "source": i.source,
+                    "note": i.note} for i in bridge.items],
+    })
+    return base
+
+
+def _mdetail(method: dict, key: str) -> float | None:
+    for d in method.get("detail", []):
+        if d["key"] == key:
+            return d["value"]
+    return None
+
+
+def growth_out(m: ModelResult) -> dict:
+    """The DCF − EPV comparison, with the server-written sentence. The
+    inverted case is a labeled state, never a negative 'value of growth'."""
+    g = m.growth
+    if not g.available:
+        return {"available": False, "state": "unavailable",
+                "reason": {"code": g.reason_code, "message": g.reason},
+                "text": g.reason}
+    if g.state == "value_destructive":
+        text = ("Earnings power alone is worth more than the DCF: the "
+                "projected path earns less than holding today's profits "
+                "flat, so growth at these assumptions destroys value — "
+                "returns below the cost of capital, or shrinkage.")
+    else:
+        share = (f" — {g.share_of_dcf:.0%} of the DCF value rests on growth"
+                 f" beyond today's earnings power" if g.share_of_dcf is not None
+                 else "")
+        text = f"Growth is worth {_dollars(g.per_share)} a share here{share}."
+    return {"available": True, "state": g.state, "per_share": g.per_share,
+            "share_of_dcf": g.share_of_dcf, "text": text}
 
 
 def curves_out(m: ModelResult, reverse_dict: dict | None) -> dict:
@@ -512,8 +538,10 @@ def serialize_model(m: ModelResult, preset: Preset | None,
     price = m.market.price.value
     h = m.history
     cov = h.coverage
-    gordon = _leg(m, "gordon", price)
-    exit_mult = _leg(m, "exit_multiple", price)
+    methods = [method_out(mr, price)
+               for mr in sorted(m.methods, key=lambda mr: mr.order)]
+    by_id = {mo["id"]: mo for mo in methods}
+    gordon, exit_mult = by_id["gordon"], by_id["exit_multiple"]
     reverse_dict = _reverse_out(reverse)
     warnings = warnings_out(m)
     return {
@@ -550,10 +578,8 @@ def serialize_model(m: ModelResult, preset: Preset | None,
                                 price, gordon, exit_mult, reverse_dict),
         "curves": curves_out(m, reverse_dict),
         "drivers": drivers_out(m),
-        "valuation": {
-            "gordon": gordon,
-            "exit_multiple": exit_mult,
-        },
+        "valuation": methods,
+        "growth": growth_out(m),
         "wacc": dataclasses.asdict(m.wacc),
         "ufcf": [dataclasses.asdict(y) for y in m.ufcf],
         "projections": [{"fiscal_year": p.fiscal_year, "fye": p.fye.isoformat(),

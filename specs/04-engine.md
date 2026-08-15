@@ -311,10 +311,29 @@ per cell (only the varied inputs change).
 
 Projected IS/BS/CF (FY1–FY5) · UFCF schedule with discount factors · WACC components
 (each intermediate value exposed: coverage, rating, spread, Ke, Kd, weights) · both TVs
-with PVs and % of EV · implied cross-checks · EV→equity bridge (every line) · value per
-share (both methods) vs current price · sensitivity grids · assumptions echo
-(default/derivation/override per field) · warnings (incl. inherited ingest warnings) ·
-validation report (projection invariants).
+with PVs and % of EV · implied cross-checks · EV→equity bridge (every line) ·
+**`methods` — the valuation-methods registry** (owner spec 2026-08-15): an ordered list
+of `MethodResult` entries (`gordon`, `exit_multiple`, `epv`), each carrying id, display
+label, display order, availability (or a machine-readable reason), enterprise value,
+the shared bridge, and generic label/unit/value detail rows — the API, workbook, and
+frontend iterate this registry and never name legs individually; adding a fourth method
+touches no serializer, sheet-frame, or rendering code (contract-tested with a stub
+method). The reverse DCF is deliberately NOT a method (it solves for assumptions) ·
+**`growth` — value of growth** = Gordon per-share − EPV per-share and as % of the Gordon
+value (comparator: Gordon only — both intrinsic, same WACC and bridge); EPV > DCF is a
+labeled `value_destructive` state, never a negative number · sensitivity grids ·
+assumptions echo (default/derivation/override per field) · warnings (incl. inherited
+ingest warnings) · validation report (projection invariants).
+
+**EPV (Earnings Power Value):** `EV = FY0 revenue × epv_margin × (1 − marginal tax) ÷
+WACC × (1+WACC)^(1−t₁)` — a flat perpetuity with the same first-flow timing as the
+explicit years. `epv_margin` is a real assumption (per-profile derived default:
+mature/compounder trailing-3y mean, cyclical full window, declining latest year,
+declining wins collisions — methodology `epv_margin_normalization`). Maintenance
+capex = D&A and flat working capital, so D&A cancels (methodology
+`epv_maintenance_capex`). Negative normalized EBIT → unavailable
+(`epv_negative_earnings`). Tested invariant: a DCF with zero growth everywhere,
+capex = D&A, and flat working capital converges to EPV at rel 1e-9.
 
 ## Invariants
 

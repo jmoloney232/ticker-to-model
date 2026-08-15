@@ -613,3 +613,117 @@ conventions:
       is expansion, wrong if the elevated rate IS maintenance (undepreciated
       asset inflation). The toggle and target are both editable and the
       fade is visible year-by-year in the workbook.
+
+  # ── Valuation methods (the registry) ───────────────────────────────────────
+  - id: valuation_methods
+    label: Valuation methods
+    category: valuation
+    default: "Three independent methods, each with its own availability state and the SAME EV → equity bridge: DCF — Gordon perpetuity, DCF — exit multiple, and Earnings Power Value (no growth). The reverse DCF is not a method — it solves for implied assumptions rather than producing a value"
+    derivation: >
+      Every method reports enterprise value, per-share value, and its bridge,
+      or an honest unavailable state with a machine-readable reason. Display
+      order is part of the registry (engine), never the frontend. Methods
+      share the discount rate and the bridge so their disagreement isolates
+      the growth and terminal assumptions, not plumbing differences.
+    editable: false
+    tradeoff: >
+      A single blended number would be tidier and is deliberately not
+      offered: the methods answer different questions, and the spread
+      between them is information (see value_of_growth), not noise to
+      average away.
+
+  - id: epv_method
+    label: Earnings Power Value (EPV)
+    category: valuation
+    default: "EPV enterprise value = FY0 revenue × normalized EBIT margin × (1 − marginal tax) ÷ WACC, timed like a flat perpetuity whose first flow sits at the first forecast midpoint (same mid-year/stub machinery as the DCF)"
+    derivation: >
+      Greenwald-style no-growth valuation: capitalize today's demonstrated
+      earnings power at the cost of capital. The marginal tax rate is used —
+      the same rate as terminal NOPAT and after-tax Kd — because a
+      perpetuity should carry the ongoing rate, not a 3y effective rate that
+      embeds one-offs. EPV deliberately shares the DCF's WACC: the
+      comparison then isolates the growth and terminal assumptions but NOT
+      the cost-of-capital convention. A negative normalized EBIT makes EPV
+      unavailable with a reason (the same rule as the negative terminal
+      anchor). Property-tested invariant: a DCF with zero growth in every
+      year, zero terminal growth, capex equal to D&A, and flat working
+      capital converges to the EPV cell exactly.
+    editable: true
+    tradeoff: >
+      EPV embeds no view of the future, which is both its value (an anchor
+      free of growth assumptions) and its limit (it prices durable growth at
+      zero). For heavy-R&D compounders it understates steady-state earnings
+      power because growth investment is expensed through EBIT — the
+      Greenwald adjustment (capitalizing part of growth spending) is a named
+      future refinement, not attempted in v1.
+
+  - id: epv_margin_normalization
+    label: EPV margin normalization (by profile)
+    category: valuation
+    default: "Normalized EBIT margin applied to FY0 revenue — mature and compounder: trailing 3y mean; cyclical modifier: full observed window; declining: latest year. When declining and cyclical collide, declining wins"
+    rules:
+      mature: trailing_3y_mean
+      compounder: trailing_3y_mean
+      cyclical: full_window_mean
+      declining: latest_year
+      collision: declining_wins
+    derivation: >
+      Cyclical filers average across the full window because capitalizing
+      one phase of the cycle is the classic cyclicals error. Declining
+      filers use the latest year: older margins reflect scale the business
+      no longer has, and trend-adjusting would smuggle a forecast into a
+      no-growth method — the decline belongs in the DCF − EPV gap, where it
+      shows up as negative value of growth. Compounders keep the trailing
+      3y mean rather than the (typically peak) latest year: mildly
+      conservative for a rising-margin business, which is the right
+      direction for a no-growth number, and it keeps the growth-value
+      comparison clean. Declining beats cyclical because secular decline
+      means old cycle peaks are not coming back. Note the DCF's own cost
+      lines still use the full-cycle window for declining+cyclical filers —
+      a projection of cost structure and a capitalization of current
+      earnings power are different questions.
+    editable: true
+    tradeoff: >
+      Any single window is contestable; the choice is disclosed per profile
+      and the margin itself is an editable assumption (epv_margin) with the
+      rule in its provenance. Owner-approved 2026-08-15.
+
+  - id: epv_maintenance_capex
+    label: EPV maintenance capex
+    category: valuation
+    default: "Maintenance capex = D&A; working capital held flat (no growth to fund)"
+    derivation: >
+      The standard EPV simplification: a no-growth business spends only what
+      sustains the asset base. Under it, no-growth FCF = NOPAT exactly — D&A
+      cancels out of the number entirely, so EPV reduces to a perpetuity on
+      normalized NOPAT and needs no capex estimate. (A side effect: EPV is
+      immune to distortions in the D&A-on-PP&E convention for
+      amortization-heavy filers.)
+    editable: false
+    tradeoff: >
+      True maintenance capex can sit above D&A (asset inflation) or below it
+      (amortization of acquired intangibles that needs no cash replacement).
+      A refined maintenance-capex estimate is a documented future
+      refinement, deliberately not attempted in v1 — the simplification is
+      stated here and on the workbook's EPV block.
+
+  - id: value_of_growth
+    label: Value of growth (DCF − EPV)
+    category: valuation
+    default: "Gordon DCF per share − EPV per share, also expressed as a share of the DCF value. Comparator is the Gordon leg only"
+    derivation: >
+      Both are intrinsic perpetuity-family values sharing WACC and the
+      bridge, so their difference isolates what the growth and terminal
+      assumptions are worth; the exit-multiple leg is market-anchored and
+      would mix an intrinsic and a market number. When EPV exceeds the DCF
+      the state is labeled value-destructive — the projected path earns less
+      than holding today's profits flat (returns below the cost of capital,
+      or shrinkage) — and is never rendered as a negative "value of growth".
+      Unavailable whenever either input method is, with the reason carried
+      through.
+    editable: false
+    tradeoff: >
+      The split is only as good as the EPV normalization behind it; for
+      expensed-growth compounders the growth share reads high because EPV
+      reads low (see epv_method). It is a decomposition of this model's own
+      numbers, not evidence about the market's view.

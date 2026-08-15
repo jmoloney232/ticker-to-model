@@ -3,6 +3,7 @@ never interpolates (owner spec, redesign 2026-08-15). The gate that matters:
 every curve point must equal a full build_model at that assumption value."""
 
 import pytest
+from conftest import val
 from test_api import client  # noqa: F401 — fixture
 from test_engine import VD, F, toy_history, toy_market
 
@@ -46,7 +47,7 @@ class TestCurveShape:
         current = curve["landmarks"]["current"]
         v = {x: v for x, v in curve["points"]}[current]
         assert v == pytest.approx(
-            payload["valuation"]["gordon"]["value_per_share"], rel=1e-12)
+            val(payload, "gordon")["value_per_share"], rel=1e-12)
 
 
 class TestCurveParity:
@@ -59,7 +60,7 @@ class TestCurveParity:
             body = client.post("/api/model/MSFT",
                                json={"overrides": {"terminal_growth": x}}).json()
             assert body["status"] == "ok"
-            assert body["valuation"]["gordon"]["value_per_share"] == \
+            assert val(body, "gordon")["value_per_share"] == \
                 pytest.approx(v, rel=1e-9), f"curve diverges at g={x}"
 
     def test_other_edits_reshape_the_curve(self, client):  # noqa: F811

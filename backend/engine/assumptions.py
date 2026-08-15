@@ -15,6 +15,15 @@ from market.models import MarketInputs
 from .errors import InvalidAssumptionError
 from .models import Assumption, Assumptions
 
+# EPV margin normalization by profile — rule NAMES, parity-tested against
+# methodology.yaml epv_margin_normalization.rules (owner-approved 2026-08-15)
+EPV_MARGIN_RULES = {
+    "mature": "trailing_3y_mean",
+    "compounder": "trailing_3y_mean",
+    "cyclical": "full_window_mean",
+    "declining": "latest_year",
+    "collision": "declining_wins",
+}
 GROWTH_CAP = 0.30            # owner decision: the default must be defensible;
 GROWTH_WARN = 0.25           # the uncapped CAGR is displayed alongside
 MARGINAL_TAX = 0.25          # 21% federal + state blend (methodology: tax_rate)
@@ -281,6 +290,19 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs,
         "equity incl. NCI/preferred/temporary − cash − ST investments); None → "
         "falls back to WACC (value-neutral reinvestment) with a warning", unit="rate")
 
+    # ── earnings power (EPV) ───────────────────────────────────────────────
+    # Normalized EBIT margin capitalized at WACC with maintenance capex = D&A
+    # and working capital held flat — under that simplification D&A cancels
+    # and EPV reduces to a perpetuity on normalized NOPAT. Profiles restate
+    # the normalization window (owner-approved 2026-08-15): cyclical → full
+    # observed window; declining → latest year (declining wins the collision);
+    # compounder/mature keep the house trailing-3y mean.
+    add("epv_margin", _mean([p.value("operating_income") / p.value("revenue")
+                             for p in w]),
+        "EPV normalized EBIT margin — trailing 3y mean operating margin "
+        "(house rule; a rising-margin filer is valued a touch conservatively, "
+        "the right direction for a no-growth number)")
+
     # ── exit multiple ──────────────────────────────────────────────────────
     shares = _share_proxy(history)
     add("share_count", shares,
@@ -477,6 +499,31 @@ def _apply_profile(a: Assumptions, prof, history: FinancialHistory,
                     f"Profile: {len(w_full)}y full-cycle margin-identity "
                     "closure (cyclical)")
 
+    # EPV margin normalization (owner-approved 2026-08-15). Precedence when
+    # declining AND cyclical collide (KHC): declining wins — secular decline
+    # means old cycle peaks aren't coming back, and a full-window average
+    # would capitalize a base the company demonstrably no longer has. The
+    # DCF's cost lines above still use the full-cycle window (different
+    # question: projecting a cost structure forward vs. capitalizing today's
+    # demonstrated earnings power).
+    if prof.primary == "declining":
+        fy0 = history.periods[-1]
+        set_default("epv_margin",
+                    fy0.value("operating_income") / fy0.value("revenue"),
+                    "Profile: latest-year operating margin — older margins "
+                    "reflect scale the business no longer has; the decline "
+                    "itself belongs in the DCF − EPV growth gap, never "
+                    "extrapolated into a no-growth number (declining wins "
+                    "over cyclical here)")
+    elif "cyclical" in prof.modifiers:
+        w_full = history.periods
+        set_default("epv_margin",
+                    _mean([p.value("operating_income") / p.value("revenue")
+                           for p in w_full]),
+                    f"Profile: {len(w_full)}y full-cycle mean operating "
+                    "margin — capitalizing one phase of the cycle is the "
+                    "classic cyclicals error")
+
     if "reinvestment_heavy" in prof.modifiers:
         m = prof.measures
         set_default("capex_fade", True,
@@ -534,6 +581,9 @@ _DOMAINS: dict[str, tuple[float, float, str]] = {
     "share_count": (1.0, 1e12, "share count positive"),
     "terminal_roic": (0.0, 2.0, "ROIC within (0, 200%]"),
     "cash_floor_pct": (0.0, 0.25, "cash floor within [0%, 25%]"),
+    # a stated negative margin is a coherent (if bleak) view — EPV then goes
+    # honestly unavailable rather than blocking the input
+    "epv_margin": (-0.50, 0.60, "EPV margin within [-50%, 60%]"),
 }
 
 # Discrete domains: structural inputs where only named values are coherent

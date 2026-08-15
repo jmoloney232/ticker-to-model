@@ -37,11 +37,13 @@ from .wacc import build_wacc
 STEPS = {"rate": 0.01, "ratio": 0.01, "x": 0.5, "days": 5.0}
 WACC_STEP = 0.01
 
-# WACC inputs (composite covers them) and non-drivers
+# WACC inputs (composite covers them) and non-drivers; epv_margin drives
+# the EPV method only — it cannot move the headline leg, so sweeping it
+# would print a zero-impact row
 EXCLUDED = frozenset({
     "beta", "beta_raw", "erp", "risk_free", "embedded_debt_rate",
     "coverage_ratio", "interest_income_yield",
-    "share_count", "forecast_years",
+    "share_count", "forecast_years", "epv_margin",
 }) | DISPLAY_ONLY
 
 TOP_N = 5

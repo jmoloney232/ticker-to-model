@@ -25,6 +25,10 @@ from .models import (
     Bridge,
     BridgeItem,
     EngineWarning,
+    GrowthValue,
+    MethodAvailability,
+    MethodDetail,
+    MethodResult,
     ModelResult,
     ProjectedPeriod,
     SensitivityGrid,
@@ -248,6 +252,104 @@ def sensitivity_grids(history: FinancialHistory, assumptions: Assumptions,
                                      g=None, multiple=m)
                     for m in mults] for w in waccs])
     return grids
+
+
+# ── valuation-methods registry (owner spec 2026-08-15) ──────────────────────
+# Ids are stable (share codes, tests, workbook map); display order and labels
+# live here, never in the frontend. The reverse DCF is not a method.
+
+EPV_NOTE = ("No-growth view: normalized operating profit, taxed at the "
+            "marginal rate, capitalized at WACC. Maintenance capex = D&A and "
+            "working capital held flat — so D&A cancels and EPV reduces to a "
+            "perpetuity on normalized NOPAT (documented simplification). "
+            "Shares the DCF's discount rate: the comparison isolates growth "
+            "and terminal assumptions, not the cost-of-capital convention.")
+
+
+def earnings_power(history: FinancialHistory, a: Assumptions, wacc: float,
+                   stub: float) -> MethodResult:
+    """EPV: FY0 revenue × normalized EBIT margin (profile-ruled default,
+    editable) × (1 − marginal tax) ÷ WACC, with the same mid-year/stub
+    timing the explicit years use — a flat perpetuity whose first flow sits
+    at the first forecast midpoint. That shared timing is what lets the
+    g = 0 DCF converge to EPV exactly (tested invariant)."""
+    fy0 = history.periods[-1]
+    margin = a.eff("epv_margin")
+    ebit_norm = fy0.value("revenue") * margin
+    if ebit_norm <= 0:
+        return MethodResult(
+            id="epv", label="Earnings power (no growth)", order=2,
+            availability=MethodAvailability(
+                False, "epv_negative_earnings",
+                f"Earnings power unavailable: normalized EBIT margin "
+                f"{margin:.1%} is non-positive — capitalizing negative "
+                "earnings is a sign error, not a valuation (the same rule "
+                "as the negative terminal anchor)."),
+            note=EPV_NOTE)
+    nopat = ebit_norm * (1 - a.eff("marginal_tax"))
+    t1 = 1 - stub - (0.5 if a.eff("midyear") else 0.0)
+    timing = (1 + wacc) ** (1 - t1)
+    ev = nopat / wacc * timing
+    bridge = build_bridge(history, a, "epv", ev)
+    return MethodResult(
+        id="epv", label="Earnings power (no growth)", order=2,
+        availability=MethodAvailability(True), note=EPV_NOTE,
+        enterprise_value=ev, bridge=bridge,
+        detail=[
+            MethodDetail("epv_margin", "Normalized EBIT margin", "ratio",
+                         margin),
+            MethodDetail("ebit_normalized",
+                         "Normalized EBIT (FY0 revenue × margin)", "usd",
+                         ebit_norm),
+            MethodDetail("nopat_normalized",
+                         "Normalized NOPAT (marginal-taxed)", "usd", nopat),
+            MethodDetail("timing_factor", "Mid-year/stub timing factor", "x",
+                         timing),
+        ])
+
+
+def _dcf_method(method_id: str, label: str, order: int, note: str,
+                terminal: dict[str, TerminalLeg], bridges: dict[str, Bridge],
+                reason_code: str, reason: str,
+                extra: list[MethodDetail]) -> MethodResult:
+    if method_id not in terminal:
+        return MethodResult(id=method_id, label=label, order=order,
+                            availability=MethodAvailability(
+                                False, reason_code, reason), note=note)
+    leg, bridge = terminal[method_id], bridges[method_id]
+    ev = bridge.enterprise_value
+    detail = [
+        MethodDetail("tv_at_fyeN", "Terminal value at final FYE", "usd",
+                     leg.value_at_fyeN),
+        MethodDetail("tv_pv", "PV of terminal value", "usd", leg.pv),
+        MethodDetail("tv_exponent", "Discount exponent (years)", "years",
+                     leg.exponent),
+        MethodDetail("tv_share_of_ev", "Terminal-value share of EV", "ratio",
+                     leg.pv / ev if ev > 0 else float("nan")),
+    ] + extra
+    return MethodResult(id=method_id, label=label, order=order,
+                        availability=MethodAvailability(True), note=note,
+                        enterprise_value=ev, bridge=bridge, detail=detail)
+
+
+def _growth_value(methods: list[MethodResult]) -> GrowthValue:
+    by_id = {mr.id: mr for mr in methods}
+    gordon, epv = by_id["gordon"], by_id["epv"]
+    if not gordon.availability.available:
+        return GrowthValue(False, reason_code="dcf_unavailable",
+                           reason="Value of growth needs the Gordon DCF leg, "
+                                  "which is unavailable here: "
+                                  + gordon.availability.reason)
+    if not epv.availability.available:
+        return GrowthValue(False, reason_code="epv_unavailable",
+                           reason="Value of growth needs the earnings-power "
+                                  "value, which is unavailable here: "
+                                  + epv.availability.reason)
+    vg = gordon.bridge.value_per_share - epv.bridge.value_per_share
+    share = (vg / gordon.bridge.value_per_share
+             if gordon.bridge.value_per_share > 0 else None)
+    return GrowthValue(True, per_share=vg, share_of_dcf=share,
+                       state="positive" if vg >= 0 else "value_destructive")
 
 
 def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
@@ -497,6 +599,8 @@ def build_model(history: FinancialHistory, market: MarketInputs,
     terminal: dict[str, TerminalLeg] = {}
     crosschecks: dict[str, float] = {}
     bridges: dict[str, Bridge] = {}
+    gordon_reason = ("terminal_anchor_negative", "")
+    exit_reason = ("terminal_anchor_negative", "")
     pv_explicit = sum(y.pv for y in schedule)
 
     if nopat_anchor > 0:
@@ -507,14 +611,15 @@ def build_model(history: FinancialHistory, market: MarketInputs,
         bridges["gordon"] = build_bridge(history, a, "gordon",
                                          pv_explicit + gordon.pv)
     else:
+        msg = (f"Gordon terminal value unavailable: projected FY5 EBIT is "
+               f"{fy5.income['operating_income'] / 1e9:,.1f}B — the "
+               "terminal NOPAT anchor is negative, and a perpetuity on a "
+               "negative base is a sign error, not a valuation. A value "
+               "here requires an explicit recovery view (see the reverse "
+               "DCF, which remains available).")
+        gordon_reason = ("terminal_anchor_negative", msg)
         warnings.append(EngineWarning(
-            code="terminal_anchor_negative",
-            message=(f"Gordon terminal value unavailable: projected FY5 EBIT is "
-                     f"{fy5.income['operating_income'] / 1e9:,.1f}B — the "
-                     "terminal NOPAT anchor is negative, and a perpetuity on a "
-                     "negative base is a sign error, not a valuation. A value "
-                     "here requires an explicit recovery view (see the reverse "
-                     "DCF, which remains available)."),
+            code="terminal_anchor_negative", message=msg,
             detail={"fy5_ebit": fy5.income["operating_income"], "leg": "gordon"}))
 
     multiple = a.eff("exit_multiple")
@@ -528,12 +633,50 @@ def build_model(history: FinancialHistory, market: MarketInputs,
         bridges["exit_multiple"] = build_bridge(history, a, "exit_multiple",
                                                 pv_explicit + exit_leg.pv)
     elif multiple is not None:
+        msg = (f"Exit-multiple terminal value unavailable: projected FY5 "
+               f"EBITDA is {ebitda_n / 1e9:,.1f}B — a multiple of a "
+               "negative EBITDA is not a value.")
+        exit_reason = ("terminal_anchor_negative", msg)
         warnings.append(EngineWarning(
-            code="terminal_anchor_negative",
-            message=(f"Exit-multiple terminal value unavailable: projected FY5 "
-                     f"EBITDA is {ebitda_n / 1e9:,.1f}B — a multiple of a "
-                     "negative EBITDA is not a value."),
+            code="terminal_anchor_negative", message=msg,
             detail={"fy5_ebitda": ebitda_n, "leg": "exit_multiple"}))
+    else:
+        exit_reason = ("exit_multiple_unavailable",
+                       ("No exit multiple — FY0 EBITDA ≤ 0, so a current "
+                        "EV/EBITDA cannot be derived."))
+
+    epv = earnings_power(history, a, wacc, stub)
+    if epv.bridge is not None:
+        bridges["epv"] = epv.bridge    # bridges stays a complete by-id view
+    if not epv.availability.available:
+        warnings.append(EngineWarning(
+            code="epv_negative_earnings", message=epv.availability.reason,
+            detail={"epv_margin": a.eff("epv_margin")}))
+    methods = [
+        _dcf_method(
+            "gordon", "DCF — Gordon perpetuity", 0,
+            "grows explicit-year cash flows into a perpetuity, with terminal "
+            "reinvestment priced at RR = g / ROIC",
+            terminal, bridges, *gordon_reason,
+            extra=[MethodDetail("fcf_terminal", "Terminal-year FCF", "usd",
+                                terminal["gordon"].detail["fcf_terminal"]),
+                   MethodDetail("reinvestment_rate",
+                                "Terminal reinvestment rate (g / ROIC)",
+                                "ratio",
+                                terminal["gordon"].detail["reinvestment_rate"])]
+            if "gordon" in terminal else []),
+        _dcf_method(
+            "exit_multiple", "DCF — exit multiple", 1,
+            "prices the terminal year the way the market prices today",
+            terminal, bridges, *exit_reason,
+            extra=[MethodDetail("multiple", "Exit EV/EBITDA multiple", "x",
+                                terminal["exit_multiple"].detail["multiple"]),
+                   MethodDetail("ebitda_n", "Terminal-year EBITDA", "usd",
+                                terminal["exit_multiple"].detail["ebitda_n"])]
+            if "exit_multiple" in terminal else []),
+        epv,
+    ]
+    growth = _growth_value(methods)
 
     checks = _checks(projections, history, wacc_build, a, terminal,
                      bridges["gordon"].enterprise_value
@@ -546,4 +689,5 @@ def build_model(history: FinancialHistory, market: MarketInputs,
         ticker=history.company.ticker, valuation_date=valuation_date,
         history=history, market=market, assumptions=a, projections=projections,
         ufcf=schedule, wacc=wacc_build, terminal=terminal, crosschecks=crosschecks,
-        bridges=bridges, sensitivity=grids, checks=checks, warnings=warnings)
+        bridges=bridges, methods=methods, growth=growth,
+        sensitivity=grids, checks=checks, warnings=warnings)

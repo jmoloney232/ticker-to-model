@@ -204,3 +204,15 @@ def clean_facts() -> dict:
 @pytest.fixture
 def clean_source(clean_facts) -> StaticSource:
     return make_source(clean_facts)
+
+
+def val(doc: dict, method_id: str) -> dict:
+    """One method from the serialized valuation registry (an ordered list —
+    consumers look up by stable id, never by position)."""
+    return next(mo for mo in doc["valuation"] if mo["id"] == method_id)
+
+
+def mdetail(method: dict, key: str):
+    """One method-specific metadata value from a serialized method's
+    generic detail list."""
+    return next(d["value"] for d in method["detail"] if d["key"] == key)

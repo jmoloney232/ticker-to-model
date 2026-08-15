@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from conftest import val
 from test_api import edgar_for, provider_for
 from test_engine import GOLDEN_VD, toy_history, toy_market
 
@@ -249,8 +250,8 @@ class TestProfileApi:
         code = re["code"]
         via = client.get(f"/api/model/MSFT?code={code}").json()
         assert via["profile"]["tag"] == "mature"
-        assert (via["valuation"]["gordon"]["value_per_share"]
-                == re["valuation"]["gordon"]["value_per_share"])
+        assert (val(via, "gordon")["value_per_share"]
+                == val(re, "gordon")["value_per_share"])
 
         assert client.post("/api/model/MSFT",
                            json={"profile": "turbo"}).status_code == 400

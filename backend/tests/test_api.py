@@ -7,6 +7,7 @@ edits never re-trigger upstream fetches."""
 from __future__ import annotations
 
 import pytest
+from conftest import mdetail, val
 from fastapi.testclient import TestClient
 from test_cli import msft_market_provider, synthetic_provider
 from test_engine import GOLDEN_VD, msft_model
@@ -84,16 +85,23 @@ class TestModelOk:
         doc = r.json()
         assert doc["status"] == "ok"
         m = msft_model()
-        g = doc["valuation"]["gordon"]
+        g = val(doc, "gordon")
         assert g["available"] is True
         assert g["value_per_share"] == pytest.approx(
             m.bridges["gordon"].value_per_share, rel=1e-12)
         assert g["vs_price"] == pytest.approx(
             m.bridges["gordon"].value_per_share / m.market.price.value - 1)
-        assert g["tv_share_of_ev"] == pytest.approx(
+        assert mdetail(g, "tv_share_of_ev") == pytest.approx(
             m.terminal["gordon"].pv / m.bridges["gordon"].enterprise_value)
-        assert doc["valuation"]["exit_multiple"]["value_per_share"] == \
+        assert val(doc, "exit_multiple")["value_per_share"] == \
             pytest.approx(m.bridges["exit_multiple"].value_per_share, rel=1e-12)
+        # the EPV method rides the same registry and the same bridge
+        epv = val(doc, "epv")
+        assert epv["available"] is True
+        assert epv["value_per_share"] == pytest.approx(
+            m.bridges["epv"].value_per_share, rel=1e-12)
+        assert doc["growth"]["per_share"] == pytest.approx(
+            m.growth.per_share, rel=1e-12)
         assert doc["wacc"]["wacc"] == pytest.approx(m.wacc.wacc, rel=1e-12)
         assert (doc["sensitivity"]["wacc_x_g"]["cells"][2][2]
                 == pytest.approx(m.sensitivity["wacc_x_g"].cells[2][2]))
@@ -185,8 +193,8 @@ class TestLayering:
             "overrides": {"terminal_growth": 0.03}}).json()
         via_code = client.get(
             f"/api/model/MSFT?code={code}&valuation_date={VD}").json()
-        assert (via_code["valuation"]["gordon"]["value_per_share"]
-                == explicit["valuation"]["gordon"]["value_per_share"])
+        assert (val(via_code, "gordon")["value_per_share"]
+                == val(explicit, "gordon")["value_per_share"])
         assert via_code["code"] == explicit["code"]
 
     def test_edits_do_not_refetch_upstream(self, client):
@@ -230,10 +238,10 @@ class TestStates:
         # KHC: FY0 EBITDA <= 0 -> exit leg honestly unavailable, gordon runs
         doc = client.post("/api/model/KHC", json={"valuation_date": VD}).json()
         assert doc["status"] == "ok"
-        exit_leg = doc["valuation"]["exit_multiple"]
+        exit_leg = val(doc, "exit_multiple")
         assert exit_leg["available"] is False
         assert exit_leg["reason"]["code"] == "exit_multiple_unavailable"
-        assert doc["valuation"]["gordon"]["available"] is True
+        assert val(doc, "gordon")["available"] is True
 
     def test_invalid_override_is_400_with_the_constraint(self, client):
         r = client.post("/api/model/MSFT", json={
@@ -294,10 +302,14 @@ class TestScreenEqualsDownload:
         cover = wb["Cover"]
         labels = {c.value: cover.cell(row=c.row, column=2).value
                   for c in cover["A"] if c.value}
-        assert labels["Value per share — Gordon"] == pytest.approx(
-            screen["valuation"]["gordon"]["value_per_share"], rel=1e-6)
-        assert labels["Value per share — exit multiple"] == pytest.approx(
-            screen["valuation"]["exit_multiple"]["value_per_share"], rel=1e-6)
+        # cover rows are registry-driven: label text comes from the same
+        # method labels the API serves — screen and workbook cannot diverge
+        for mid in ("gordon", "exit_multiple", "epv"):
+            mo = val(screen, mid)
+            assert labels[f"{mo['label']} (per share)"] == pytest.approx(
+                mo["value_per_share"], rel=1e-6)
+        assert labels["Value of growth (DCF − EPV, per share)"] == \
+            pytest.approx(screen["growth"]["per_share"], rel=1e-6)
         assert labels["Active preset"] == "Street convention"
 
     def test_workbook_refused_for_refused_filer(self, client):

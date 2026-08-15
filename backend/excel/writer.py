@@ -115,6 +115,7 @@ ASSUMPTION_GROUPS = [
     ("Terminal value", ["terminal_growth", "terminal_growth_rf_ceiling",
                         "terminal_roic"]),
     ("Exit & bridge", ["exit_multiple", "share_count", "cash_floor_pct"]),
+    ("Earnings power (EPV)", ["epv_margin"]),
     ("Toggles", ["midyear", "sbc_addback", "kd_synthetic", "beta_adjusted",
                  "terminal_roic_fade", "fade_curved", "capex_fade"]),
 ]
@@ -733,14 +734,97 @@ class _Writer:
         self.map[f"val:{key}"] = ("Valuation", f"{letter}{row}")
         return row + 1
 
+    # ── per-method formula blocks (see BLOCK_BUILDERS in write_valuation) ───
+    def _block_gordon(self, ws, r: int) -> tuple[int, str]:
+        V = self.val
+        self._header(ws, r, "TERMINAL VALUE — GORDON (reinvestment-consistent)",
+                     span=8)
+        r += 1
+        ebit5 = f"{self._mcol(self.horizon)}{self.val['u_ebit']}"
+        r = self._vrow(ws, r, "NOPAT (N+1) = EBIT5 × (1+g) × (1−marginal)",
+                       "nopat6",
+                       f"={ebit5}*(1+terminal_growth)*(1-marginal_tax)")
+        r = self._vrow(ws, r, "ROIC used (derived; falls back to WACC when "
+                              "unavailable or ≤ g; terminal_roic_fade → "
+                              "midpoint with WACC)", "roic",
+                       f'=IF(OR(terminal_roic="",terminal_roic<='
+                       f"terminal_growth),{V['wacc']},"
+                       f"IF(terminal_roic_fade,(terminal_roic+{V['wacc']})/2,"
+                       "terminal_roic))", FMT_PCT)
+        r = self._vrow(ws, r, "Reinvestment rate RR = g / ROIC", "rr",
+                       f"=terminal_growth/{V['roic']}", FMT_PCT)
+        guard = (f'IF({V["nopat6"]}<=0,"unavailable — negative terminal NOPAT '
+                 f'anchor (see Methodology)",IF(terminal_growth>={V["wacc"]},'
+                 f'"blocked — terminal g must be below WACC",{{}}))')
+        r = self._vrow(ws, r, "TV at FYE5", "tv_gordon",
+                       "=" + guard.format(
+                           f"{V['nopat6']}*(1-{V['rr']})"
+                           f"/({V['wacc']}-terminal_growth)"))
+        r = self._vrow(ws, r, "PV of Gordon TV", "pv_gordon",
+                       f"=IF(ISNUMBER({V['tv_gordon']}),{V['tv_gordon']}"
+                       f"*POWER(1+{V['wacc']},-{V['exp_gordon']}),"
+                       f"{V['tv_gordon']})")
+        r += 1
+        ev = (f"=IF(ISNUMBER({V['pv_gordon']}),{V['pv_explicit']}"
+              f"+{V['pv_gordon']},{V['pv_gordon']})")
+        return r, ev
+
+    def _block_exit(self, ws, r: int) -> tuple[int, str]:
+        V = self.val
+        self._header(ws, r, "TERMINAL VALUE — EXIT MULTIPLE", span=8)
+        r += 1
+        ebit5 = f"{self._mcol(self.horizon)}{self.val['u_ebit']}"
+        da5 = f"{self._mcol(self.horizon)}{self.val['u_da']}"
+        r = self._vrow(ws, r, "EBITDA (FY5) = EBIT5 + memo D&A5", "ebitda5",
+                       f"={ebit5}+{da5}")
+        r = self._vrow(ws, r, "TV at FYE5 (multiple × EBITDA5)", "tv_exit",
+                       f'=IF(exit_multiple="","unavailable — no exit multiple '
+                       f'(FY0 EBITDA ≤ 0)",IF({V["ebitda5"]}<=0,'
+                       f'"unavailable — negative FY5 EBITDA",'
+                       f"exit_multiple*{V['ebitda5']}))")
+        r = self._vrow(ws, r, "PV of exit TV (full tN — deliberate asymmetry)",
+                       "pv_exit",
+                       f"=IF(ISNUMBER({V['tv_exit']}),{V['tv_exit']}"
+                       f"*POWER(1+{V['wacc']},-{V['tn']}),{V['tv_exit']})")
+        r += 1
+        ev = (f"=IF(ISNUMBER({V['pv_exit']}),{V['pv_explicit']}"
+              f"+{V['pv_exit']},{V['pv_exit']})")
+        return r, ev
+
+    def _block_epv(self, ws, r: int) -> tuple[int, str]:
+        """Earnings power: normalized EBIT (FY0 revenue × epv_margin, the
+        profile-ruled editable assumption), marginal-taxed, capitalized at
+        WACC with the SAME first-flow timing as the explicit years — a flat
+        perpetuity the g = 0 DCF converges to exactly (tested)."""
+        V = self.val
+        self._header(ws, r, "EARNINGS POWER — NO GROWTH (EPV)", span=8)
+        r += 1
+        rev0 = f"N({self.hist_ref('income', 'revenue')})"
+        r = self._vrow(ws, r, "Normalized EBIT = FY0 revenue × EPV margin",
+                       "epv_ebit", f"={rev0}*epv_margin")
+        r = self._vrow(ws, r, "Normalized NOPAT (marginal-taxed — same rate "
+                              "as terminal NOPAT)", "epv_nopat",
+                       f"={V['epv_ebit']}*(1-marginal_tax)")
+        t1 = f"C{self.val['u_t']}"
+        r = self._vrow(ws, r, "EPV enterprise value = NOPAT / WACC × "
+                              "(1+WACC)^(1−t₁) (maintenance capex = D&A, "
+                              "flat working capital — D&A cancels)",
+                       "ev_epv",
+                       f'=IF({V["epv_ebit"]}<=0,"unavailable — negative '
+                       f'normalized earnings (see Methodology)",'
+                       f"{V['epv_nopat']}/{V['wacc']}"
+                       f"*POWER(1+{V['wacc']},1-{t1}))")
+        r += 1
+        return r, f"={V['ev_epv']}"
+
     def write_valuation(self) -> None:
         ws = self.ws_v
         ws.freeze_panes = "B3"
         ws.column_dimensions["A"].width = 40
         for i in range(1, 9):
             ws.column_dimensions[get_column_letter(1 + i)].width = 13
-        ws["A1"] = ("Valuation — WACC build-up, UFCF, both terminal values, "
-                    "EV → equity bridge (all live formulas)")
+        ws["A1"] = ("Valuation — WACC build-up, UFCF, one block per valuation "
+                    "method, EV → equity bridge (all live formulas)")
         ws["A1"].font = Font(bold=True)
         r = 3
         V = self.val
@@ -850,50 +934,24 @@ class _Writer:
                        FMT_M, bold=True)
         r += 1
 
-        self._header(ws, r, "TERMINAL VALUE — GORDON (reinvestment-consistent)",
-                     span=8)
-        r += 1
-        ebit5 = f"{self._mcol(self.horizon)}{self.val['u_ebit']}"
-        da5 = f"{self._mcol(self.horizon)}{self.val['u_da']}"
-        r = self._vrow(ws, r, "NOPAT (N+1) = EBIT5 × (1+g) × (1−marginal)",
-                       "nopat6",
-                       f"={ebit5}*(1+terminal_growth)*(1-marginal_tax)")
-        r = self._vrow(ws, r, "ROIC used (derived; falls back to WACC when "
-                              "unavailable or ≤ g; terminal_roic_fade → "
-                              "midpoint with WACC)", "roic",
-                       f'=IF(OR(terminal_roic="",terminal_roic<='
-                       f"terminal_growth),{V['wacc']},"
-                       f"IF(terminal_roic_fade,(terminal_roic+{V['wacc']})/2,"
-                       "terminal_roic))", FMT_PCT)
-        r = self._vrow(ws, r, "Reinvestment rate RR = g / ROIC", "rr",
-                       f"=terminal_growth/{V['roic']}", FMT_PCT)
-        guard = (f'IF({V["nopat6"]}<=0,"unavailable — negative terminal NOPAT '
-                 f'anchor (see Methodology)",IF(terminal_growth>={V["wacc"]},'
-                 f'"blocked — terminal g must be below WACC",{{}}))')
-        r = self._vrow(ws, r, "TV at FYE5", "tv_gordon",
-                       "=" + guard.format(
-                           f"{V['nopat6']}*(1-{V['rr']})"
-                           f"/({V['wacc']}-terminal_growth)"))
-        r = self._vrow(ws, r, "PV of Gordon TV", "pv_gordon",
-                       f"=IF(ISNUMBER({V['tv_gordon']}),{V['tv_gordon']}"
-                       f"*POWER(1+{V['wacc']},-{V['exp_gordon']}),"
-                       f"{V['tv_gordon']})")
-        r += 1
-
-        self._header(ws, r, "TERMINAL VALUE — EXIT MULTIPLE", span=8)
-        r += 1
-        r = self._vrow(ws, r, "EBITDA (FY5) = EBIT5 + memo D&A5", "ebitda5",
-                       f"={ebit5}+{da5}")
-        r = self._vrow(ws, r, "TV at FYE5 (multiple × EBITDA5)", "tv_exit",
-                       f'=IF(exit_multiple="","unavailable — no exit multiple '
-                       f'(FY0 EBITDA ≤ 0)",IF({V["ebitda5"]}<=0,'
-                       f'"unavailable — negative FY5 EBITDA",'
-                       f"exit_multiple*{V['ebitda5']}))")
-        r = self._vrow(ws, r, "PV of exit TV (full tN — deliberate asymmetry)",
-                       "pv_exit",
-                       f"=IF(ISNUMBER({V['tv_exit']}),{V['tv_exit']}"
-                       f"*POWER(1+{V['wacc']},-{V['tn']}),{V['tv_exit']})")
-        r += 1
+        # ── method blocks — BLOCK_BUILDERS keyed by registry id ─────────────
+        # The frame below (bridge columns, equity, per-share) iterates the
+        # registry generically; the formula core of each method necessarily
+        # lives in its own builder (live formulas ARE the method). Adding a
+        # method = one engine entry + one builder here; an id with no builder
+        # fails loudly rather than silently dropping a column.
+        builders = {"gordon": self._block_gordon,
+                    "exit_multiple": self._block_exit,
+                    "epv": self._block_epv}
+        methods = sorted(self.m.methods, key=lambda mr: mr.order)
+        ev_formula: dict[str, str] = {}
+        for mr in methods:
+            if mr.id not in builders:
+                raise KeyError(
+                    f"no workbook block builder for valuation method "
+                    f"'{mr.id}' — every registry entry must contribute "
+                    "its formula block")
+            r, ev_formula[mr.id] = builders[mr.id](ws, r)
 
         self._header(ws, r, "IMPLIED CROSS-CHECKS", span=8)
         r += 1
@@ -910,72 +968,91 @@ class _Writer:
 
         self._header(ws, r, "EV → EQUITY BRIDGE", span=8)
         r += 1
-        ws.cell(row=r, column=2, value="Gordon").font = Font(bold=True)
-        ws.cell(row=r, column=3, value="Exit multiple").font = Font(bold=True)
+        # one column per registry method, in registry order — the frame never
+        # names a method; labels, order, and count all come from the engine
+        for j, mr in enumerate(methods):
+            ws.cell(row=r, column=2 + j, value=mr.label).font = Font(bold=True)
         r += 1
         hr = lambda k: f"N({self.hist_ref('balance', k)})"
+        ws.cell(row=r, column=1, value="Enterprise value")
+        for j, mr in enumerate(methods):
+            c = ws.cell(row=r, column=2 + j, value=ev_formula[mr.id])
+            c.number_format = FMT_M
+        self.val["br_ev"] = f"Valuation!$B${r}"
+        self.map["val:br_ev"] = ("Valuation", f"B{r}")
+        ev_row = r
+        r += 1
         items = [
-            ("Enterprise value", "ev",
-             (f"=IF(ISNUMBER({V['pv_gordon']}),{V['pv_explicit']}"
-             f"+{V['pv_gordon']},{V['pv_gordon']})"),
-             (f"=IF(ISNUMBER({V['pv_exit']}),{V['pv_explicit']}"
-             f"+{V['pv_exit']},{V['pv_exit']})")),
             ("+ Excess cash (above operating floor)", "excess",
              (f"=MAX(0,{hr('cash_and_equivalents')}"
              f"+{hr('short_term_investments')}-cash_floor_pct"
-             f"*N({self.hist_ref('income', 'revenue')}))"),
-             None),
-            ("+ Long-term investments", "lti", f"={hr('long_term_investments')}",
-             None),
-            ("− Gross debt", "gd", f"=-{hr('gross_debt')}", None),
+             f"*N({self.hist_ref('income', 'revenue')}))")),
+            ("+ Long-term investments", "lti", f"={hr('long_term_investments')}"),
+            ("− Gross debt", "gd", f"=-{hr('gross_debt')}"),
             ("− Noncontrolling interest", "nci",
-             f"=-{hr('noncontrolling_interest')}", None),
-            ("− Preferred equity", "pref", f"=-{hr('preferred_equity')}", None),
-            ("− Temporary equity", "temp", f"=-{hr('temporary_equity')}", None),
+             f"=-{hr('noncontrolling_interest')}"),
+            ("− Preferred equity", "pref", f"=-{hr('preferred_equity')}"),
+            ("− Temporary equity", "temp", f"=-{hr('temporary_equity')}"),
             ("− Pension × (1 − marginal)", "pension",
-             f"=-{hr('pension_liability')}*(1-marginal_tax)", None),
+             f"=-{hr('pension_liability')}*(1-marginal_tax)"),
         ]
         bridge_rows = []
-        for label, key, f_gordon, f_exit in items:
+        for label, key, formula in items:
             ws.cell(row=r, column=1, value=label)
-            c = ws.cell(row=r, column=2, value=f_gordon)
-            c.number_format = FMT_M
-            if f_exit is None:
-                f_exit = f"=$B${r}"
-            c2 = ws.cell(row=r, column=3, value=f_exit)
-            c2.number_format = FMT_M
+            for j, _mr in enumerate(methods):
+                c = ws.cell(row=r, column=2 + j,
+                            value=formula if j == 0 else f"=$B${r}")
+                c.number_format = FMT_M
             self.val[f"br_{key}"] = f"Valuation!$B${r}"
             self.map[f"val:br_{key}"] = ("Valuation", f"B{r}")
-            if key != "ev":
-                bridge_rows.append(r)
+            bridge_rows.append(r)
             r += 1
         adj = "+".join(f"$B${row}" for row in bridge_rows)
         r = self._vrow(ws, r, "Bridge adjustment (Σ items — used by the "
                               "sensitivity grids)", "bridge_adj", f"={adj}")
-        for col, key, evk in ((2, "equity_gordon", "br_ev"),
-                              (3, "equity_exit", "br_ev")):
-            ev_ref = f"${get_column_letter(col)}${self.map['val:br_ev'][1][1:]}"
-            ws.cell(row=r, column=1, value="Equity value").font = Font(bold=True)
+        ws.cell(row=r, column=1, value="Equity value").font = Font(bold=True)
+        for j, mr in enumerate(methods):
+            col = get_column_letter(2 + j)
+            ev_ref = f"${col}${ev_row}"
             c = ws.cell(
-                row=r, column=col,
+                row=r, column=2 + j,
                 value=f"=IF(ISNUMBER({ev_ref}),{ev_ref}+{V['bridge_adj']},"
                       f"{ev_ref})")
             c.number_format = FMT_M
             c.font = Font(bold=True)
-            self.val[key] = f"Valuation!${get_column_letter(col)}${r}"
-            self.map[f"val:{key}"] = ("Valuation", f"{get_column_letter(col)}{r}")
+            self.val[f"equity_{mr.id}"] = f"Valuation!${col}${r}"
+            self.map[f"val:equity_{mr.id}"] = ("Valuation", f"{col}{r}")
         r += 1
-        for col, key, eq in ((2, "ps_gordon", "equity_gordon"),
-                             (3, "ps_exit", "equity_exit")):
-            ws.cell(row=r, column=1,
-                    value="VALUE PER SHARE").font = Font(bold=True)
-            c = ws.cell(row=r, column=col,
-                        value=f"=IF(ISNUMBER({V[eq]}),{V[eq]}/share_count,"
-                              f"{V[eq]})")
+        ws.cell(row=r, column=1, value="VALUE PER SHARE").font = Font(bold=True)
+        for j, mr in enumerate(methods):
+            col = get_column_letter(2 + j)
+            eq = V[f"equity_{mr.id}"]
+            c = ws.cell(row=r, column=2 + j,
+                        value=f"=IF(ISNUMBER({eq}),{eq}/share_count,{eq})")
             c.number_format = FMT_PS
             c.font = Font(bold=True)
-            self.val[key] = f"Valuation!${get_column_letter(col)}${r}"
-            self.map[f"val:{key}"] = ("Valuation", f"{get_column_letter(col)}{r}")
+            self.val[f"ps_{mr.id}"] = f"Valuation!${col}${r}"
+            self.map[f"val:ps_{mr.id}"] = ("Valuation", f"{col}{r}")
+        r += 2
+
+        # ── value of growth: DCF (Gordon) − EPV — the comparison EPV exists
+        #    for; the inverted case is labeled, never a negative number ──────
+        self._header(ws, r, "VALUE OF GROWTH (DCF − EPV)", span=8)
+        r += 1
+        ps_g, ps_e = V["ps_gordon"], V["ps_epv"]
+        r = self._vrow(ws, r, "Per share (Gordon DCF − EPV)", "growth_ps",
+                       f"=IF(AND(ISNUMBER({ps_g}),ISNUMBER({ps_e})),"
+                       f'{ps_g}-{ps_e},"n/a")', FMT_PS)
+        r = self._vrow(ws, r, "As share of the DCF value", "growth_share",
+                       f"=IF(AND(ISNUMBER({V['growth_ps']}),{ps_g}>0),"
+                       f'{V["growth_ps"]}/{ps_g},"n/a")', FMT_PCT)
+        r = self._vrow(ws, r, "Reading", "growth_state",
+                       f"=IF(ISNUMBER({V['growth_ps']}),"
+                       f'IF({V["growth_ps"]}<0,"growth is value-destructive '
+                       'at these assumptions (EPV > DCF: returns below the '
+                       'cost of capital, or shrinkage)","share of the DCF '
+                       'value resting on growth beyond today\'s earnings '
+                       'power"),"n/a")', "General")
 
     # ── Sensitivity ─────────────────────────────────────────────────────────
     def write_sensitivity(self) -> None:
@@ -1237,16 +1314,20 @@ class _Writer:
         rows = [
             ("valuation_date", "Valuation date", "=valuation_date", FMT_DATE),
             ("price", "Market price", "=market_price", FMT_PS),
-            ("ps_gordon", "Value per share — Gordon", f"={V['ps_gordon']}",
-             FMT_PS),
-            ("vs_price_gordon", "  vs price",
-             (f"=IF(ISNUMBER({V['ps_gordon']}),"
-             f"{V['ps_gordon']}/market_price-1,\"—\")"), FMT_PCT),
-            ("ps_exit", "Value per share — exit multiple", f"={V['ps_exit']}",
-             FMT_PS),
-            ("vs_price_exit", "  vs price",
-             (f"=IF(ISNUMBER({V['ps_exit']}),"
-             f"{V['ps_exit']}/market_price-1,\"—\")"), FMT_PCT),
+        ]
+        # headline per-share values iterate the registry (labels and order
+        # from the engine — Cover never names a method)
+        for mr in sorted(self.m.methods, key=lambda mr: mr.order):
+            ps = V[f"ps_{mr.id}"]
+            rows += [
+                (f"ps_{mr.id}", f"{mr.label} (per share)", f"={ps}",
+                 FMT_PS),
+                (f"vs_price_{mr.id}", "  vs price",
+                 f'=IF(ISNUMBER({ps}),{ps}/market_price-1,"—")', FMT_PCT),
+            ]
+        rows += [
+            ("growth_ps", "Value of growth (DCF − EPV, per share)",
+             f"={V['growth_ps']}", FMT_PS),
             ("wacc", "WACC", f"={V['wacc']}", FMT_PCT),
             ("implied_mult", "Implied exit multiple (from your g)",
              f"={V['implied_mult']}", FMT_X),

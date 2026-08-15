@@ -14,9 +14,11 @@ from ingest.errors import (
 
 
 def leg(v=281.07, vs=-0.436, mult=None):
-    detail = {"multiple": mult} if mult else {}
+    # method_out shape: method-specific metadata is a generic detail list
+    detail = ([{"key": "multiple", "label": "Exit EV/EBITDA multiple",
+                "unit": "x", "value": mult}] if mult else [])
     return {"available": True, "value_per_share": v, "vs_price": vs,
-            "tv_detail": detail}
+            "detail": detail}
 
 
 def unavailable(code="exit_multiple_unavailable"):

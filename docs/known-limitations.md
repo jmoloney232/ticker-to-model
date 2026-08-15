@@ -196,3 +196,39 @@ carries the embedded rate (coupon proxy), the synthetic Kd (discount rate),
 and book face value, so pricing the debt as a single coupon bond of the
 average maturity is tractable with one new input (average maturity, from the
 debt footnote or a stated default). Queued as a v2 item.
+
+## 10. EPV maintenance capex = D&A (v1 simplification)
+
+**What:** Earnings Power Value assumes the no-growth business spends exactly its
+D&A to sustain itself and holds working capital flat. Under that simplification
+no-growth FCF = NOPAT, so EPV is a perpetuity on normalized NOPAT — clean, but
+the simplification cuts both ways: true maintenance capex sits *above* D&A when
+asset inflation makes replacement dearer than the depreciating cost basis, and
+*below* it when D&A is dominated by amortization of acquired intangibles that
+needs no cash replacement.
+
+**Why:** a refined maintenance-capex estimate (Greenwald's revenue-linked split
+of capex, or footnote-level asset-age analysis) needs data and derivation rules
+v1 deliberately doesn't have. The simplification is the standard one, and it is
+stated on the methodology page and on the workbook's EPV block.
+
+**Fixing it would require:** a maintenance/growth capex split with its own
+documented derivation (e.g. capex × (1 − revenue growth ÷ asset turnover)),
+plus a defense of it per cost structure. Queued as a future refinement.
+
+## 11. EPV understates expensed-growth compounders
+
+**What:** heavy-R&D and heavy-S&M filers expense much of their *growth*
+investment through EBIT, so normalized EBIT — and with it EPV — understates
+steady-state earnings power, and the "value of growth" line reads
+correspondingly high. MSFT-class filers show EPV far below the DCF partly for
+this reason, not only because growth is genuinely valuable.
+
+**Why:** separating growth spending from maintenance spending inside R&D/S&M
+requires either capitalizing R&D (a full restatement with an amortization
+schedule) or an arbitrary split — both out of v1 scope.
+
+**Fixing it would require:** the Greenwald adjustment — capitalize a disclosed
+share of R&D/S&M into the normalized earnings base with a documented
+amortization rule. Named as a future refinement in methodology.yaml
+(`epv_method`).

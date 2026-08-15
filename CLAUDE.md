@@ -61,6 +61,16 @@ Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
   extensions approved: IBM Plex Mono (self-hosted, committed woff2) + --warn /
   --down / --down-on-dark. Frontend deps stay react/react-dom only; no
   Playwright without explicit sign-off (outside-project browser download).
+- **EPV + methods registry (owner, 2026-08-15):** valuation output is a
+  registry of independent methods (gordon, exit_multiple, epv — ordered,
+  availability-honest; reverse DCF is NOT a method); API/workbook/frontend
+  iterate it, adding a method touches no serializer/frame/rendering code.
+  EPV = FY0 revenue × epv_margin × (1−marginal) ÷ WACC with DCF timing;
+  epv_margin per profile (mature/compounder 3y mean, cyclical full window,
+  declining latest year; declining wins collisions); maintenance capex = D&A
+  (D&A cancels). Value of growth = Gordon − EPV (Gordon comparator only);
+  EPV > DCF is a labeled value-destructive state, never a negative number.
+  Property-tested: g=0 DCF converges to EPV at rel 1e-9.
 
 ## Architecture
 

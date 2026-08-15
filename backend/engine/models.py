@@ -146,6 +146,61 @@ class Bridge:
 
 
 @dataclass
+class MethodAvailability:
+    """Available, or honestly unavailable with a machine-readable reason —
+    the same data-not-error rule the legs already follow."""
+
+    available: bool
+    reason_code: str = ""                 # e.g. terminal_anchor_negative
+    reason: str = ""                      # human text, written engine-side
+
+
+@dataclass
+class MethodDetail:
+    """One method-specific metadata row, presentation-ready. Generic label/
+    unit/value so the serializer, sheet frame, and UI never branch on ids."""
+
+    key: str
+    label: str
+    unit: str                             # usd | ratio | x | years
+    value: float
+
+
+@dataclass
+class MethodResult:
+    """One entry in the valuation-methods registry. The API, workbook, and
+    frontend iterate ModelResult.methods and render THIS shape only; adding
+    a method means adding an entry here plus its workbook formula block —
+    never touching the serializer or rendering logic. Display order lives
+    in the registry, not the frontend. The reverse DCF is deliberately not
+    a method: it solves for implied assumptions, it doesn't produce a value."""
+
+    id: str                               # gordon | exit_multiple | epv — stable
+    label: str
+    order: int
+    availability: MethodAvailability
+    note: str = ""                        # one-line method framing for the reader
+    enterprise_value: float | None = None
+    bridge: Bridge | None = None          # the shared EV→equity bridge, unchanged
+    detail: list[MethodDetail] = field(default_factory=list)
+
+
+@dataclass
+class GrowthValue:
+    """DCF (Gordon) minus EPV — what the market-facing comparison is FOR.
+    state 'value_destructive' when EPV exceeds the DCF: the projected path is
+    worth less than holding today's earnings flat (returns below the cost of
+    capital, or shrinkage) — never rendered as a negative 'value of growth'."""
+
+    available: bool
+    per_share: float | None = None
+    share_of_dcf: float | None = None     # None when Gordon per-share ≤ 0
+    state: str = ""                       # positive | value_destructive
+    reason_code: str = ""
+    reason: str = ""
+
+
+@dataclass
 class SensitivityGrid:
     """5×5 value-per-share grid; None cells = invalid combination (g ≥ WACC)."""
 
@@ -176,7 +231,9 @@ class ModelResult:
     wacc: WaccBuild
     terminal: dict[str, TerminalLeg]      # gordon (+ exit_multiple when available)
     crosschecks: dict[str, float]         # implied_exit_multiple / implied_terminal_g
-    bridges: dict[str, Bridge]
+    bridges: dict[str, Bridge]            # engine-internal by id; consumers use methods
+    methods: list[MethodResult]           # the registry — ordered, availability-honest
+    growth: GrowthValue                   # DCF − EPV, the derived comparison
     sensitivity: dict[str, SensitivityGrid]
     checks: ValidationReport              # projection invariants P1..P8
     warnings: list[EngineWarning]         # engine-born; inherited live on history/market
