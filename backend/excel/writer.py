@@ -103,7 +103,7 @@ ASSUMPTION_GROUPS = [
      ["cogs_pct", "rnd_pct", "sga_pct", "other_opex_pct",
       "unclassified_costs_pct"]),
     ("Capital intensity", ["da_pct_beginning_ppe", "da_pct_revenue",
-                           "capex_pct", "sbc_pct"]),
+                           "capex_pct", "capex_terminal_pct", "sbc_pct"]),
     ("Working capital", ["dso", "dio", "dpo", "oca_pct", "accrued_pct",
                          "ocl_pct", "defrev_pct"]),
     ("Taxes", ["effective_tax_fy1", "marginal_tax"]),
@@ -116,7 +116,7 @@ ASSUMPTION_GROUPS = [
                         "terminal_roic"]),
     ("Exit & bridge", ["exit_multiple", "share_count", "cash_floor_pct"]),
     ("Toggles", ["midyear", "sbc_addback", "kd_synthetic", "beta_adjusted",
-                 "terminal_roic_fade"]),
+                 "terminal_roic_fade", "fade_curved", "capex_fade"]),
 ]
 
 
@@ -214,6 +214,19 @@ class _Writer:
             ws.column_dimensions[col].width = w
         ws["A1"] = "Assumptions — the model's control panel"
         ws["A1"].font = Font(bold=True, size=12)
+        prof = getattr(self.m.assumptions, "profile", None)
+        if prof is not None:
+            mm = prof.measures
+            roic = (f"{mm.roic_median:+.1%}" if mm.roic_median is not None
+                    else "n/a")
+            cda = f"{mm.capex_da:.2f}×" if mm.capex_da is not None else "n/a"
+            flag = " (REASSIGNED BY USER)" if prof.reassigned else ""
+            ws["D1"] = (f"Company profile: {prof.tag}{flag} — measured: "
+                        f"revenue CAGR {mm.cagr:+.1%}, latest yr "
+                        f"{mm.g_latest:+.1%}, median ROIC {roic} vs WACC "
+                        f"{mm.wacc:.1%}, margin range {mm.margin_range:.1%}, "
+                        f"capex/D&A {cda} — rules on the Methodology sheet")
+            ws["D1"].font = Font(italic=True, size=9)
         for col, head in zip("ABCDEF", ("Assumption", "Value", "Unit",
                                         "Provenance", "Derived default",
                                         "Derivation / rule"), strict=True):
@@ -418,10 +431,16 @@ class _Writer:
         r = 4
         self._header(ws, r, "DRIVERS", span=2 + self.horizon)
         r += 1
+        # Fade shape is LIVE: linear, or half-cosine when fade_curved is on
+        # (compounder profile) — same closed form as engine growth_path
+        n1 = self.horizon - 1
         r = self._mrow(ws, r, "Revenue growth (fade to terminal g)", "growth",
-                       None, lambda i: f"=revenue_growth_fy1+{i - 1}/"
-                                       f"{self.horizon - 1}*(terminal_growth"
-                                       f"-revenue_growth_fy1)", FMT_PCT)
+                       None, lambda i: (
+                           f"=IF(fade_curved,terminal_growth+"
+                           f"(revenue_growth_fy1-terminal_growth)*"
+                           f"(1+COS(PI()*{i - 1}/{n1}))/2,"
+                           f"revenue_growth_fy1+{i - 1}/{n1}*"
+                           f"(terminal_growth-revenue_growth_fy1))"), FMT_PCT)
         r = self._mrow(ws, r, "Tax rate (effective → marginal fade)", "tax_rate",
                        None, lambda i: f"=effective_tax_fy1+{i - 1}/"
                                        f"{self.horizon - 1}*(marginal_tax"
@@ -497,8 +516,13 @@ class _Writer:
                        "da", None, da)
         r = self._mrow(ws, r, "Stock-based compensation", "sbc", None,
                        lambda i: f"=sbc_pct*{self._mcol(i)}{R['revenue']}")
+        # Capex % of revenue is LIVE: flat, or fading to maintenance when
+        # capex_fade is on (reinvestment-heavy profile) — mirrors capex_path
         r = self._mrow(ws, r, "Capex", "capex", None,
-                       lambda i: f"=capex_pct*{self._mcol(i)}{R['revenue']}")
+                       lambda i: (
+                           f"=IF(capex_fade,capex_pct+{i - 1}/"
+                           f"{self.horizon - 1}*(capex_terminal_pct-capex_pct),"
+                           f"capex_pct)*{self._mcol(i)}{R['revenue']}"))
         r += 1
 
         # NOTE: cash row must exist before int_inc formulas resolve — rows are
@@ -1083,9 +1107,14 @@ class _Writer:
             for i in range(1, self.horizon + 1):
                 col = self._mcol(i)
                 prev = self._mcol(i - 1)
+                # same live fade-shape branch as the Model sheet, at this
+                # column's g (the grid re-projects per column, cosine included)
                 ws.cell(row=rows["growth"], column=2 + i,
-                        value=f"=revenue_growth_fy1+{i - 1}/"
-                              f"{self.horizon - 1}*({g}-revenue_growth_fy1)"
+                        value=(f"=IF(fade_curved,{g}+"
+                               f"(revenue_growth_fy1-{g})*"
+                               f"(1+COS(PI()*{i - 1}/{self.horizon - 1}))/2,"
+                               f"revenue_growth_fy1+{i - 1}/"
+                               f"{self.horizon - 1}*({g}-revenue_growth_fy1))")
                         ).number_format = FMT_PCT
                 rev_prev = (f"Model!$B${R['revenue']}" if i == 1
                             else f"{prev}{rows['rev']}")
@@ -1096,7 +1125,10 @@ class _Writer:
                         value=f"={col}{rows['rev']}*(1-({ratios}))"
                         ).number_format = FMT_M
                 ws.cell(row=rows["capex"], column=2 + i,
-                        value=f"=capex_pct*{col}{rows['rev']}"
+                        value=(f"=IF(capex_fade,capex_pct+{i - 1}/"
+                               f"{self.horizon - 1}*"
+                               f"(capex_terminal_pct-capex_pct),capex_pct)"
+                               f"*{col}{rows['rev']}")
                         ).number_format = FMT_M
                 ppe_prev = (f"Model!$B${R['ppe']}" if i == 1
                             else f"{prev}{rows['ppe']}")
