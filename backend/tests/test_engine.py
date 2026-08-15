@@ -98,8 +98,12 @@ def toy_market(price: float = 50.0, rf: float = 0.04,
 
 
 def toy_model(overrides=None, **kwargs):
+    # profile=None: the toy's flat revenues would classify as declining,
+    # which is correct classification but wrong for these tests — they pin
+    # hand-derived numbers to verify MECHANICS. Classification has its own
+    # tests (test_profile.py) and the fixtures exercise the auto path.
     return build_model(toy_history(), toy_market(**kwargs), valuation_date=VD,
-                       overrides=overrides)
+                       overrides=overrides, profile=None)
 
 
 # Hand-derived constants (comments show the arithmetic, not the code's):
@@ -114,7 +118,7 @@ WACC = 0.068625
 
 class TestMicroAssumptions:
     def test_every_default_hand_checked(self):
-        a = derive_assumptions(toy_history(), toy_market())
+        a = derive_assumptions(toy_history(), toy_market(), profile=None)
         expected = {
             "revenue_growth_fy1": 0.0, "cogs_pct": 0.40, "rnd_pct": 0.10,
             "sga_pct": 0.20, "other_opex_pct": 0.05,
@@ -268,7 +272,7 @@ class TestProperties:
         assert any(w.code == "growth_fade_steep" for w in m.warnings)
 
     def test_override_domain_validation(self):
-        a = derive_assumptions(toy_history(), toy_market())
+        a = derive_assumptions(toy_history(), toy_market(), profile=None)
         with pytest.raises(InvalidAssumptionError) as exc:
             apply_overrides(a, {"payout_ratio": 1.4})
         assert "payout" in exc.value.user_message
@@ -560,7 +564,7 @@ class TestUnclassifiedCosts:
         h = toy_history()
         for p in h.periods:
             p.income["other_operating"] = F(1.0)
-        a = derive_assumptions(h, toy_market())
+        a = derive_assumptions(h, toy_market(), profile=None)
         assert a.eff("unclassified_costs_pct") == pytest.approx(0.049)
         m = build_model(h, toy_market(), valuation_date=VD)
         fy1 = m.projections[0]
@@ -626,7 +630,7 @@ class TestNegativeTerminalAnchor:
         from engine.reverse import implied_assumption
         h = self._distressed(-150.0)
         r = implied_assumption(h, toy_market(), "ebitda_margin", VD,
-                               target_price=20.0)
+                               target_price=20.0, profile=None)
         assert r.status == "solved"
         assert r.implied > r.derived
 

@@ -11,6 +11,7 @@ anyway (engine-bug tripwires).
 
 from __future__ import annotations
 
+import math
 from datetime import timedelta
 
 from ingest.models import FinancialHistory, FiscalPeriod
@@ -38,12 +39,34 @@ def horizon(assumptions: Assumptions) -> int:
 
 
 def growth_path(assumptions: Assumptions) -> list[float]:
-    """Linear fade from FY1 growth to terminal g by the final forecast year
-    (curved fade is a documented v1.1 candidate)."""
+    """FY1 growth fading to terminal g by the final forecast year. Linear by
+    default; half-cosine when fade_curved is on (compounder profile) —
+    g_i = g_t + (g_1 − g_t)·(1 + cos(π·i/(n−1)))/2 — front-loaded
+    persistence with zero slope at both ends, so the near years hold the
+    observed growth and the path lands in the perpetuity without a kink.
+    No free parameter (nothing to tune toward market — owner rule)."""
     g1 = assumptions.eff("revenue_growth_fy1")
     gt = assumptions.eff("terminal_growth")
     n = horizon(assumptions)
+    if assumptions.has("fade_curved") and assumptions.eff("fade_curved"):
+        return [gt + (g1 - gt) * (1 + math.cos(math.pi * i / (n - 1))) / 2
+                for i in range(n)]
     return [g1 + i / (n - 1) * (gt - g1) for i in range(n)]
+
+
+def capex_path(assumptions: Assumptions) -> list[float]:
+    """Capex % of revenue per forecast year. Flat at the trailing rate by
+    default; with capex_fade on (reinvestment-heavy profile), a linear fade
+    to the maintenance level (capex_terminal_pct) by the final year —
+    holding growth capex flat forever contradicts terminal growth, which is
+    exactly what the reinvestment_fade_mismatch warning flags."""
+    start = assumptions.eff("capex_pct")
+    n = horizon(assumptions)
+    if (assumptions.has("capex_fade") and assumptions.eff("capex_fade")
+            and assumptions.has("capex_terminal_pct")):
+        target = assumptions.eff("capex_terminal_pct")
+        return [start + i / (n - 1) * (target - start) for i in range(n)]
+    return [start] * n
 
 
 def tax_path(assumptions: Assumptions) -> list[float]:
@@ -64,6 +87,7 @@ def project(history: FinancialHistory, assumptions: Assumptions
     cs = assumptions.cost_structure
     growth = growth_path(a)
     taxes = tax_path(a)
+    capex_pcts = capex_path(a)
 
     debt0 = gross_debt(fy0)
     da_on_ppe = a.has("da_pct_beginning_ppe")
@@ -131,7 +155,7 @@ def project(history: FinancialHistory, assumptions: Assumptions
             "other_current_liabilities": a.eff("ocl_pct") * rev,
             "deferred_revenue_current": a.eff("defrev_pct") * rev,
         }
-        capex = a.eff("capex_pct") * rev
+        capex = capex_pcts[i] * rev
         sbc = a.eff("sbc_pct") * rev
         ppe = prev_ppe + capex - da
         balance["ppe_net"] = ppe

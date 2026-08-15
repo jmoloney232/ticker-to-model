@@ -94,14 +94,17 @@ def _apply(assumptions: Assumptions, field: str, x: float,
 
 def implied_assumption(history: FinancialHistory, market: MarketInputs,
                        field: str, valuation_date: date,
-                       target_price: float | None = None) -> ImpliedResult:
+                       target_price: float | None = None,
+                       profile: str | None = "auto") -> ImpliedResult:
     """Solve one field so the Gordon leg equals target_price (default: the
-    current market price). All other defaults stay at their derived values."""
+    current market price). All other defaults stay at their derived values —
+    profile-aware, so "the model's default" means the same thing here as on
+    the dashboard (profile=None pins base defaults for mechanics tests)."""
     if field not in FIELDS:
         raise ValueError(f"unsupported reverse-DCF field {field!r} "
                          f"(supported: {', '.join(FIELDS)})")
     target = market.price.value if target_price is None else target_price
-    base = derive_assumptions(history, market)
+    base = derive_assumptions(history, market, profile=profile)
     wacc = build_wacc(history, market, base).wacc
     stub = _stub(valuation_date, history.periods[-1].end)
     fy1 = project(history, base)[0]
@@ -149,8 +152,10 @@ def implied_assumption(history: FinancialHistory, market: MarketInputs,
 
 
 def implied_all(history: FinancialHistory, market: MarketInputs,
-                valuation_date: date) -> dict[str, ImpliedResult]:
-    return {field: implied_assumption(history, market, field, valuation_date)
+                valuation_date: date,
+                profile: str | None = "auto") -> dict[str, ImpliedResult]:
+    return {field: implied_assumption(history, market, field, valuation_date,
+                                      profile=profile)
             for field in FIELDS}
 
 

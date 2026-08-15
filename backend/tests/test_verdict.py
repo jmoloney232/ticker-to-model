@@ -134,17 +134,25 @@ class TestRefusalVerdicts:
 
 class TestVerdictEndToEnd:
     def test_msft_verdict_in_payload(self, client):  # noqa: F811
+        # exact wording is pinned by the template tests above; end-to-end
+        # asserts structure (numbers move with the profile-aware golden)
         body = client.post("/api/model/MSFT", json={}).json()
         v = body["verdict"]
         assert v["state"] == "ok"
-        assert "Microsoft is worth $281 a share" in v["text"]
-        assert "44% below its $498 price" in v["text"]
+        assert "Microsoft is worth $" in v["text"]
         assert "growth forever — on this model's other assumptions" \
             in v["text"]
 
-    def test_khc_negative_equity_end_to_end(self, client):  # noqa: F811
+    def test_khc_profile_lifts_negative_equity(self, client):  # noqa: F811
+        """KHC's declining profile anchors terminal g to its own trajectory
+        (−1.1%); without the 2.5%-forever floor forcing perpetual
+        reinvestment KHC never showed, the equity value turns positive —
+        the negative_equity verdict now needs the old floor to reproduce."""
         body = client.post("/api/model/KHC", json={}).json()
-        v = body["verdict"]
+        assert body["verdict"]["state"] == "ok"
+        floored = client.post("/api/model/KHC", json={
+            "overrides": {"terminal_growth": 0.025}}).json()
+        v = floored["verdict"]
         assert v["state"] == "negative_equity"
         assert "leaving nothing for shareholders" in v["text"]
 

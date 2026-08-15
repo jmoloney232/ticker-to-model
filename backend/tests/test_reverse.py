@@ -6,7 +6,15 @@ from __future__ import annotations
 import pytest
 from test_engine import VD, toy_history, toy_market, toy_model
 
-from engine.reverse import FIELDS, implied_assumption
+from engine.reverse import FIELDS
+from engine.reverse import implied_assumption as _implied_assumption
+
+
+def implied_assumption(*args, **kw):
+    # profile=None: like toy_model, these tests pin base defaults to verify
+    # solver MECHANICS — the toy's flat revenues would classify declining
+    kw.setdefault("profile", None)
+    return _implied_assumption(*args, **kw)
 
 BASE = toy_model()
 BASE_PRICE = BASE.bridges["gordon"].value_per_share

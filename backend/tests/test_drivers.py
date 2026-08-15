@@ -86,15 +86,17 @@ class TestMsftDrivers:
             expected, rel=1e-9)
 
     def test_drivers_follow_user_edits(self, client):  # noqa: F811
-        """Ranking is computed against the CURRENT assumptions."""
+        """Ranking is computed against the CURRENT assumptions. MSFT's
+        compounder profile defaults g at the 10Y; editing it DOWN to 2.5%
+        moves it away from WACC, so its impact must fall (convexity)."""
         base = client.post("/api/model/MSFT", json={}).json()["drivers"]
         edited = client.post("/api/model/MSFT", json={
-            "overrides": {"terminal_growth": 0.04}}).json()["drivers"]
+            "overrides": {"terminal_growth": 0.025}}).json()["drivers"]
         g_base = next(d["impact_per_share"] for d in base
                       if d["name"] == "terminal_growth")
         g_edit = next(d["impact_per_share"] for d in edited
                       if d["name"] == "terminal_growth")
-        assert g_edit > g_base       # convexity: g matters more near WACC
+        assert g_edit < g_base       # convexity: g matters more near WACC
 
 
 def test_negative_anchor_ranks_on_exit_leg():

@@ -29,6 +29,7 @@ class Assumption:
     preset_value: float | bool | None = None
     preset_name: str | None = None
     preset_note: str = ""                 # "rule: <expr>" | "literal" | "solved: ..."
+    profile_tag: str | None = None        # set when a company profile owns the default
 
     @property
     def effective(self):
@@ -50,6 +51,8 @@ class Assumption:
             return "user"
         if self.preset_value is not None:
             return f"preset:{self.preset_name}"
+        if self.profile_tag is not None:
+            return f"derived (profile: {self.profile_tag})"
         return "derived"
 
 
@@ -58,6 +61,7 @@ class Assumptions:
     fields: dict[str, Assumption]
     cost_structure: str                   # by_function | by_nature — branches ratios
     active_preset: str | None = None      # set by apply_preset (incl. "derived")
+    profile: object | None = None         # engine.profile.Profile once classified
 
     def eff(self, name: str):
         return self.fields[name].effective

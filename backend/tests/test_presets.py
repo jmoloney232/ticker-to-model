@@ -34,9 +34,13 @@ PRESETS = load_presets()
 
 
 def toy_with_preset(name, history=None, market=None):
+    # profile=None: like toy_model — preset MECHANICS against pinned base
+    # defaults (a growing toy would classify compounder and move the
+    # namespace the rules evaluate against; profiles have their own tests)
     h = history or toy_history()
     mkt = market or toy_market()
-    a = apply_preset(derive_assumptions(h, mkt), PRESETS[name], h, mkt, VD)
+    a = apply_preset(derive_assumptions(h, mkt, profile=None),
+                     PRESETS[name], h, mkt, VD)
     return build_model(h, mkt, valuation_date=VD, assumptions=a)
 
 
@@ -71,7 +75,7 @@ class TestIdentity:
     def test_derived_preset_marks_no_fields(self):
         m = toy_with_preset("derived")
         assert m.assumptions.active_preset == "derived"
-        assert all(a.provenance == "derived"
+        assert all(a.provenance.startswith("derived")
                    for a in m.assumptions.fields.values())
 
 

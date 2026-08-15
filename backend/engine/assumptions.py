@@ -87,6 +87,12 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+def _median(values: list[float]) -> float:
+    s = sorted(values)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
+
 def _pct_of_revenue(window: list[FiscalPeriod], item: str) -> float:
     return _mean([p.value(item, 0.0) / p.value("revenue") for p in window])
 
@@ -98,7 +104,13 @@ def _prior_pairs(history: FinancialHistory) -> list[tuple[FiscalPeriod, FiscalPe
     return pairs[-min(3, len(pairs)):]
 
 
-def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assumptions:
+def derive_assumptions(history: FinancialHistory, market: MarketInputs,
+                       profile: str | None = "auto") -> Assumptions:
+    """Derived defaults, profile-aware (owner-approved 2026-08-15).
+    profile: "auto" → classify from the filer's own measurements;
+    a tag like "mature" or "compounder+cyclical" → user reassignment
+    (provenance discloses it); None → base defaults, no profile layer
+    (internal/tests — mechanics under fixed defaults)."""
     periods = history.periods
     fy0 = periods[-1]
     w = _window(history)
@@ -310,6 +322,24 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
         "universe carry an actual agency rating the engine does not yet "
         "ingest (see known-limitations)", unit="flag")
     add("beta_adjusted", True, "Blume adjustment on (⅔β + ⅓)", unit="flag")
+    add("fade_curved", False,
+        "Growth fade shape. OFF: linear from FY1 growth to terminal g. ON: "
+        "half-cosine — front-loaded persistence (a durable franchise keeps "
+        "its growth premium in the near years) with a smooth landing into "
+        "the perpetuity, no free parameter. Set ON by the compounder "
+        "profile; editable", unit="flag")
+    add("capex_fade", False,
+        "OFF: capex held at the trailing rate all forecast years. ON: capex "
+        "% of revenue fades linearly to the maintenance level "
+        "(capex_terminal_pct) by the final year — the documented remedy for "
+        "the reinvestment_fade_mismatch warning. Set ON by the "
+        "reinvestment-heavy profile; editable", unit="flag")
+    add("capex_terminal_pct",
+        _pct_of_revenue(w, "d_and_a") * (1 + a["terminal_growth"].value),
+        "Maintenance capex: trailing 3y D&A/revenue × (1 + terminal g) — "
+        "replacement burden plus the growth increment on the asset base. "
+        "Used only when capex_fade is ON; perpetual reinvestment after the "
+        "horizon is RR = g/ROIC's job, not this line's")
     add("terminal_roic_fade", False,
         "OFF (default): terminal ROIC holds the 3y historical level in "
         "perpetuity — permanent excess returns, defensible for durable moats "
@@ -318,7 +348,142 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs) -> Assum
         "(Damodaran's stated guidance for stable-growth firms). An explicit "
         "user/preset ROIC always wins over the toggle", unit="flag")
 
-    return Assumptions(fields=a, cost_structure=cs)
+    out = Assumptions(fields=a, cost_structure=cs)
+    if profile is not None:
+        _classify_and_apply(out, history, market, profile)
+    return out
+
+
+# ── company profiles (owner-approved 2026-08-15) ─────────────────────────────
+# Classification measurements use THIS module's definitions (ROIC, margins,
+# windows) so the profile is judged by the same yardsticks as the defaults it
+# adjusts. WACC is built BEFORE application, so a profile structurally cannot
+# move it — asserted in tests.
+
+
+def _profile_measures(history: FinancialHistory, wacc: float):
+    from .profile import ProfileMeasures
+    ps = history.periods
+    rev = [p.value("revenue") for p in ps]
+    n_years = len(ps) - 1
+    margins = [p.value("operating_income") / p.value("revenue") for p in ps]
+
+    roics = []
+    for prev, cur in zip(ps, ps[1:], strict=False):
+        ic = (gross_debt(prev) + prev.value("stockholders_equity", 0.0)
+              + prev.value("noncontrolling_interest", 0.0)
+              + prev.value("preferred_equity", 0.0)
+              + prev.value("temporary_equity", 0.0)
+              - prev.value("cash_and_equivalents", 0.0)
+              - prev.value("short_term_investments", 0.0))
+        if ic > 0:
+            roics.append(cur.value("operating_income") * (1 - MARGINAL_TAX) / ic)
+
+    capex_da = []
+    for p in ps[-3:]:
+        da = p.value("d_and_a", 0.0)
+        if da > 0:
+            capex_da.append(abs(p.value("capex", 0.0)) / da)
+
+    return ProfileMeasures(
+        cagr=(rev[-1] / rev[0]) ** (1 / n_years) - 1,
+        g_latest=rev[-1] / rev[-2] - 1,
+        roic_median=_median(roics) if roics else None,
+        roic_years_above_wacc=sum(1 for r in roics if r > wacc),
+        roic_years=len(roics),
+        wacc=wacc,
+        margin_range=max(margins) - min(margins),
+        rev_down_years=sum(1 for x, y in zip(rev, rev[1:], strict=False) if y < x),
+        capex_da=_mean(capex_da) if capex_da else None,
+        window=len(ps),
+    )
+
+
+def _classify_and_apply(a: Assumptions, history: FinancialHistory,
+                        market: MarketInputs, requested: str) -> None:
+    from .profile import Profile, classify, parse_profile
+    from .wacc import build_wacc  # lazy: wacc.py imports this module
+    wacc = build_wacc(history, market, a).wacc
+    measures = _profile_measures(history, wacc)
+    auto = classify(measures)
+    if requested == "auto":
+        prof = auto
+    else:
+        primary, mods = parse_profile(requested)
+        prof = Profile(primary=primary, modifiers=mods, measures=measures,
+                       reassigned=True, notes=auto.notes)
+    _apply_profile(a, prof, history, market)
+    a.profile = prof
+
+
+def _apply_profile(a: Assumptions, prof, history: FinancialHistory,
+                   market: MarketInputs) -> None:
+    """Rewrite the DEFAULTS a profile owns — horizon, fade shape, terminal
+    growth, margin normalization, capex normalization. Nothing else: WACC
+    components, the bridge, and validation thresholds are out of bounds.
+    Presets and user overrides still layer on top unchanged."""
+    tag = prof.tag
+
+    def set_default(name: str, value, derivation: str) -> None:
+        f = a.fields[name]
+        f.value = value
+        f.derivation = derivation
+        f.profile_tag = tag
+
+    if prof.primary == "compounder":
+        rf = market.risk_free.value
+        m = prof.measures
+        set_default("forecast_years", 10,
+                    "Profile: growth ≥ 2× trend with durable excess returns "
+                    f"(CAGR {m.cagr:.1%}, ROIC−WACC "
+                    f"{(m.roic_median or 0) - m.wacc:+.1%}) — a 5-year window "
+                    "forces convergence a compounder hasn't shown; horizon "
+                    "extended to 10")
+        set_default("fade_curved", True,
+                    "Profile: half-cosine fade — front-loaded growth "
+                    "persistence, smooth landing into the perpetuity")
+        set_default("terminal_growth", rf,
+                    f"Profile: default at the published g ≤ 10Y ceiling "
+                    f"({rf:.2%}) — durable compounding priced at the "
+                    "risk-free rate's embedded nominal growth; the house-cap "
+                    "note stays visible")
+    elif prof.primary == "declining":
+        m = prof.measures
+        old = a.fields["terminal_growth"].value
+        anchored = max(-0.02, min(old, m.cagr))
+        set_default("terminal_growth", anchored,
+                    f"Profile: trailing trajectory {m.cagr:+.1%} (latest year "
+                    f"{m.g_latest:+.1%}) is below inflation — terminal g "
+                    "anchored to the company's own path, floored at −2%, "
+                    "never above the mature default. A decline is not "
+                    "assumed to reverse")
+
+    if "cyclical" in prof.modifiers:
+        w_full = history.periods
+        cs = a.cost_structure
+        if cs == "by_function" and a.has("cogs_pct"):
+            set_default("cogs_pct", _pct_of_revenue(w_full, "cost_of_revenue"),
+                        f"Profile: {len(w_full)}y full-cycle mean cost of "
+                        "revenue / revenue (cyclical — trailing 3y would "
+                        "anchor on one phase of the cycle)")
+        for item, name in (("research_and_development", "rnd_pct"),
+                           ("selling_general_admin", "sga_pct"),
+                           ("other_operating", "other_opex_pct")):
+            set_default(name, _pct_of_revenue(w_full, item),
+                        f"Profile: {len(w_full)}y full-cycle mean {item} / "
+                        "revenue (cyclical)")
+        set_default("unclassified_costs_pct",
+                    _mean([_identity_gap(p) for p in w_full]),
+                    f"Profile: {len(w_full)}y full-cycle margin-identity "
+                    "closure (cyclical)")
+
+    if "reinvestment_heavy" in prof.modifiers:
+        m = prof.measures
+        set_default("capex_fade", True,
+                    f"Profile: capex runs {m.capex_da:.2f}× D&A — held flat "
+                    "forever that contradicts terminal growth (the "
+                    "reinvestment_fade_mismatch warning's exact finding); "
+                    "capex fades to maintenance by the final year")
 
 
 # Computed context, not inputs: shown beside their editable partners so no

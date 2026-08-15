@@ -533,3 +533,83 @@ conventions:
       Gordon-leg evaluations) and guarantees the browser can never disagree
       with the engine; client-side interpolation would be faster still but
       would put valuation math in the frontend, which this project forbids.
+
+  - id: company_profiles
+    label: Company profile classifier
+    category: assumptions
+    default: "Every filer is classified from its own reported history — primary profile (compounder / mature / declining) from growth trajectory and excess returns, plus modifiers (cyclical, reinvestment-heavy) — and the DERIVED defaults adapt to it. Layering stays derived (profile-aware) → preset → user override; the profile, its trigger measurements, and any reassignment are always disclosed"
+    thresholds:
+      inflation_proxy: 0.02
+      compounder_cagr_min: 0.08
+      compounder_latest_min: 0.04
+      excess_return_min: 0.05
+      margin_range_min: 0.06
+      capex_da_min: 1.5
+      capex_da_cap: 4.0
+    derivation: >
+      Declining: full-window revenue CAGR and the latest year both below 2%
+      (≈ inflation — nominal growth below it is real shrinkage; both legs so
+      one soft year cannot reclassify). Compounder: CAGR ≥ 8% (2× the
+      nominal-GDP proxy — growth economic-share retention cannot explain),
+      latest year ≥ 4% (still growing at trend — a post-shock rebound is not
+      a compounder), median ROIC − WACC ≥ 5pp (outside invested-capital
+      measurement noise), and ROIC above WACC in every observed year
+      ("durably", literally). Mature is the fallback — boundary cases get
+      the conservative treatment. Cyclical modifier: EBIT-margin range ≥ 6pp
+      AND at least one revenue down-year (margin volatility without a
+      top-line contraction is a cost story, not a cycle). Reinvestment-heavy:
+      capex/D&A between 1.5× (the reinvestment_fade_mismatch trigger — same
+      published constant) and 4× (above which the D&A base is treated as
+      unreliable and the modifier is withheld, disclosed). A profile may set
+      only: forecast horizon, growth fade shape, terminal growth default,
+      margin normalization, capex normalization. Never WACC components, the
+      bridge, or validation thresholds.
+    editable: true
+    tradeoff: >
+      Thresholds are set from what the categories mean, never from fit
+      against market prices (owner rule) — the boundaries were placed by
+      inspecting where the feature distributions separate across a 27-filer
+      scan, and no placement was informed by any valuation gap. Uniform
+      defaults were simpler but made the model's error predictable from
+      company characteristics (gap correlating −0.68 with WACC), which is a
+      defect, not a view. The classification is user-reassignable and the
+      reassignment is disclosed in provenance.
+
+  - id: growth_fade_shape
+    label: Growth fade shape
+    category: assumptions
+    default: "Linear fade from FY1 growth to terminal g (mature, declining); half-cosine fade for compounders — g_i = g_t + (g_1 − g_t)·(1 + cos(π·i/(n−1)))/2"
+    derivation: >
+      The half-cosine holds growth near the observed rate in the early years
+      (zero slope at entry — a durable franchise does not surrender a third
+      of its growth premium in year two) and lands in the perpetuity with
+      zero slope (no kink at the terminal handoff, so the anchor year is not
+      a path artifact). It has no free parameter — nothing to tune toward
+      market — and writes directly as a live Excel formula.
+    editable: true
+    tradeoff: >
+      The linear fade understates the near years and overstates how quickly
+      a durable franchise decays; the cosine's cost is faster mid-late decay,
+      which is the honest counterpart of front-loaded persistence. A
+      power-family fade with a shape exponent was rejected because the
+      exponent would be a tunable free parameter.
+
+  - id: capex_normalization
+    label: Capex normalization (reinvestment-heavy)
+    category: assumptions
+    default: "OFF unless the reinvestment-heavy modifier applies: capex % of revenue fades linearly from the trailing rate to maintenance — trailing 3y D&A/revenue × (1 + terminal g) — by the final forecast year"
+    derivation: >
+      Capex persistently ≥ 1.5× D&A means the asset base grows materially
+      faster than it depreciates — held flat forever, that contradicts the
+      terminal growth rate (exactly what the reinvestment_fade_mismatch
+      warning flags; this is that warning's documented remedy). The
+      maintenance target is replacement burden plus the growth increment;
+      perpetual reinvestment beyond the horizon is governed by
+      RR = g/ROIC, not this line.
+    editable: true
+    tradeoff: >
+      Fading to maintenance raises explicit-window FCF for exactly the
+      companies whose recent capex is elevated — defensible when the spend
+      is expansion, wrong if the elevated rate IS maintenance (undepreciated
+      asset inflation). The toggle and target are both editable and the
+      fade is visible year-by-year in the workbook.

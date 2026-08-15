@@ -341,8 +341,12 @@ def _checks(projections: list[ProjectedPeriod], history: FinancialHistory,
 
 def build_model(history: FinancialHistory, market: MarketInputs,
                 valuation_date: date, overrides: dict | None = None,
-                assumptions: Assumptions | None = None) -> ModelResult:
-    a = assumptions or derive_assumptions(history, market)
+                assumptions: Assumptions | None = None,
+                profile: str | None = "auto") -> ModelResult:
+    """profile reaches derive_assumptions when assumptions aren't supplied:
+    "auto" classifies, a tag reassigns (user), None skips the profile layer
+    (mechanics tests pin defaults)."""
+    a = assumptions or derive_assumptions(history, market, profile=profile)
     if overrides:
         a = apply_overrides(a, overrides)
     warnings: list[EngineWarning] = []
@@ -404,11 +408,16 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                                      f"must be below WACC ({wacc:.2%})", g)
     rf = a.eff("risk_free")
     house_cap = min(TERMINAL_G_CEIL, rf)
+    # Fires on ANY layer above the house cap — user, preset, or a profile
+    # default (the compounder profile sets g at the ceiling; the disclosure
+    # must not disappear because the source is a default).
     tg_field = a.fields["terminal_growth"]
-    if tg_field.stated is not None and house_cap < tg_field.stated <= rf:
+    tg_disclosed = (tg_field.stated if tg_field.stated is not None
+                    else (tg_field.value if tg_field.profile_tag else None))
+    if tg_disclosed is not None and house_cap < tg_disclosed <= rf:
         warnings.append(EngineWarning(
             code="terminal_g_above_house_cap", severity="info",
-            message=(f"Terminal growth {tg_field.stated:.2%} "
+            message=(f"Terminal growth {tg_disclosed:.2%} "
                      f"({tg_field.provenance}) is above the engine's "
                      f"conservative house cap min(2.5%, 10Y) = {house_cap:.2%} "
                      f"but within the published constraint g ≤ risk-free "

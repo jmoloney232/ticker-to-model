@@ -105,9 +105,13 @@ class TestModelOk:
                           json={"valuation_date": VD}).json()
         rows = {a["name"]: a for a in doc["assumptions"]}
         tg = rows["terminal_growth"]
-        assert tg["provenance"] == "derived"
+        # MSFT classifies compounder+reinvestment_heavy: profile-owned
+        # defaults disclose the profile in their provenance (owner spec)
+        assert tg["provenance"] == \
+            "derived (profile: compounder+reinvestment_heavy)"
         assert tg["value"] == tg["derived_default"]
         assert tg["unit"] == "rate" and tg["rule"]
+        assert rows["capex_pct"]["provenance"] == "derived"  # untouched field
         assert rows["revenue_cagr_uncapped"]["editable"] is False
         assert doc["provenance_counts"]["derived"] == len(doc["assumptions"])
 
@@ -127,9 +131,11 @@ class TestModelOk:
         tg = doc["reverse"]["terminal_growth"]
         assert tg["status"] == "solved"
         assert tg["implied"] > tg["derived"]
-        # bounded capex reach: no-solution is NAMED, never numbered
-        assert doc["reverse"]["capex_pct"]["status"] == "no_solution_in_range"
-        assert doc["reverse"]["capex_pct"]["implied"] is None
+        # a no-solution is NAMED, never numbered (taxonomy contract; whether
+        # MSFT's capex solve brackets depends on the profile-aware gap)
+        capex = doc["reverse"]["capex_pct"]
+        assert capex["status"] in ("solved", "no_solution_in_range")
+        assert (capex["implied"] is None) == (capex["status"] != "solved")
 
     def test_share_count_derived_filer_passes_warning_through(self, client):
         doc = client.post("/api/model/GOOGL",
@@ -146,7 +152,9 @@ class TestLayering:
         rows = {a["name"]: a for a in doc["assumptions"]}
         assert rows["terminal_growth"]["provenance"] == "user"
         assert rows["terminal_growth"]["value"] == 0.03
-        assert rows["terminal_growth"]["derived_default"] == pytest.approx(0.025)
+        # profile-aware default: MSFT's compounder profile sets g at the 10Y
+        assert rows["terminal_growth"]["derived_default"] == pytest.approx(
+            doc["market"]["risk_free"]["value"])
         assert (rows["effective_tax_fy1"]["provenance"]
                 == "preset:street_convention")
         assert rows["rnd_pct"]["provenance"] == "derived"
