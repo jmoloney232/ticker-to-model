@@ -109,7 +109,7 @@ class EdgarClient:
 
         try:
             payload = self._fetch(url)
-        except (httpx.HTTPError, OSError):
+        except (httpx.HTTPError, OSError, ValueError):
             payload = None
 
         if payload is not None:
@@ -137,7 +137,9 @@ class EdgarClient:
                     )
                 resp.raise_for_status()
                 return resp.json()
-            except (httpx.HTTPError, OSError) as exc:
+            # ValueError covers a 200 with a non-JSON body (CDN error page):
+            # degrade down the ladder like any other upstream failure.
+            except (httpx.HTTPError, OSError, ValueError) as exc:
                 last_exc = exc
                 time.sleep(0.5 * (2 ** attempt))
         raise last_exc  # type: ignore[misc]

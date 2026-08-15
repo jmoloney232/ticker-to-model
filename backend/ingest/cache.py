@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 import zlib
 from pathlib import Path
@@ -17,7 +18,14 @@ from pathlib import Path
 class SqliteCache:
     def __init__(self, path: str | Path):
         self.path = str(path)
+        # One connection guarded by a lock: FastAPI runs sync endpoints in a
+        # threadpool, and a bare sqlite3 connection shared across those
+        # threads corrupts cursor state under interleaving (observed as
+        # InterfaceError / mangled rows -> 500s on concurrent first fetches).
+        self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS cache ("
             " key TEXT PRIMARY KEY, fetched_at REAL NOT NULL, body BLOB NOT NULL)"
@@ -26,9 +34,10 @@ class SqliteCache:
 
     def get(self, key: str, max_age_s: float) -> tuple[dict, bool] | None:
         """Return (payload, is_fresh) or None if absent."""
-        row = self._conn.execute(
-            "SELECT fetched_at, body FROM cache WHERE key = ?", (key,)
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT fetched_at, body FROM cache WHERE key = ?", (key,)
+            ).fetchone()
         if row is None:
             return None
         fetched_at, body = row
@@ -37,11 +46,13 @@ class SqliteCache:
 
     def put(self, key: str, payload: dict) -> None:
         body = zlib.compress(json.dumps(payload, separators=(",", ":")).encode())
-        self._conn.execute(
-            "INSERT OR REPLACE INTO cache (key, fetched_at, body) VALUES (?, ?, ?)",
-            (key, time.time(), body),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO cache (key, fetched_at, body)"
+                " VALUES (?, ?, ?)",
+                (key, time.time(), body),
+            )
+            self._conn.commit()
 
 
 class NullCache:
