@@ -151,3 +151,53 @@ def implied_all(history: FinancialHistory, market: MarketInputs,
                 valuation_date: date) -> dict[str, ImpliedResult]:
     return {field: implied_assumption(history, market, field, valuation_date)
             for field in FIELDS}
+
+
+# ── value curves (slider mechanism, owner spec 2026-08-15) ───────────────────
+# The frontend calculates nothing: a slider reads engine-computed
+# (x, per-share) points and snaps to them; the authoritative recompute fires
+# on release. General by assumption name — more sliders later.
+
+CURVE_POINTS = 25
+
+
+def value_curve(history: FinancialHistory, market: MarketInputs,
+                assumptions: Assumptions, field: str, valuation_date: date,
+                extra_points: tuple[float, ...] = ()) -> dict:
+    """(x, Gordon per-share) across `field`'s valid domain, holding every
+    other EFFECTIVE assumption fixed — presets and user overrides reshape the
+    curve. `extra_points` (landmarks: the derived default, the market-implied
+    value, the risk-free rate) are inserted exactly so the slider thumb can
+    land on them. A point where the engine cannot value is None, never a
+    guess."""
+    if field not in FIELDS:
+        raise ValueError(f"unsupported curve field {field!r} "
+                         f"(supported: {', '.join(FIELDS)})")
+    wacc = build_wacc(history, market, assumptions).wacc
+    stub = _stub(valuation_date, history.periods[-1].end)
+    fy1 = project(history, assumptions)[0]
+    da1_ratio = fy1.cashflow["d_and_a"] / fy1.income["revenue"]
+
+    if field == "terminal_growth":
+        lo, hi = -0.02, wacc - 0.0025
+    elif field == "capex_pct":
+        lo, hi = 0.0, 0.60
+    elif field == "revenue_growth_fy1":
+        lo, hi = -0.50, 1.00
+    else:                                  # ebitda_margin, FY1 basis
+        lo, hi = 0.01 + da1_ratio, 0.80 + da1_ratio
+
+    step = (hi - lo) / (CURVE_POINTS - 1)
+    xs = {lo + i * step for i in range(CURVE_POINTS)}
+    xs.update(x for x in extra_points if x is not None and lo <= x <= hi)
+
+    points: list[tuple[float, float | None]] = []
+    for x in sorted(xs):
+        candidate = copy.deepcopy(assumptions)
+        _apply(candidate, field, x, da1_ratio)
+        try:
+            v = _gordon_per_share(history, candidate, wacc, stub)
+        except (ValueError, ZeroDivisionError):
+            v = None                       # honest gap, not an interpolation
+        points.append((x, v))
+    return {"field": field, "domain": (lo, hi), "points": points}

@@ -231,6 +231,35 @@ def _leg(m: ModelResult, method: str, price: float) -> dict:
                        "detail": {}}}
 
 
+def curves_out(m: ModelResult, reverse_dict: dict | None) -> dict:
+    """Engine-computed value curves for the Summary sliders. Computed against
+    the CURRENT effective assumptions (presets and edits reshape the curve).
+    Landmarks are inserted as exact curve points so the thumb lands on them.
+    No Gordon leg (negative terminal anchor) → no curve; the leg's own
+    reason explains why the slider is absent."""
+    if "gordon" not in m.bridges:
+        return {}
+    from engine.reverse import value_curve
+    derived = m.assumptions.fields["terminal_growth"].value
+    current = m.assumptions.eff("terminal_growth")
+    rf = m.market.risk_free.value
+    solve = (reverse_dict or {}).get("terminal_growth")
+    implied = solve["implied"] if solve and solve["status"] == "solved" else None
+    curve = value_curve(m.history, m.market, m.assumptions, "terminal_growth",
+                        m.valuation_date,
+                        extra_points=(derived, current, implied, rf))
+    lo, hi = curve["domain"]
+    return {"terminal_growth": {
+        "leg": "gordon",
+        "domain": [lo, hi],
+        "points": [[x, v] for x, v in curve["points"]],
+        "landmarks": {"derived": derived, "current": current,
+                      "market_implied": implied,
+                      "rf": rf if lo <= rf <= hi else None,
+                      "block": hi},
+    }}
+
+
 def _reverse_out(reverse: dict[str, ImpliedResult] | None) -> dict | None:
     if reverse is None:
         return None
@@ -300,6 +329,7 @@ def serialize_model(m: ModelResult, preset: Preset | None,
         "verdict": verdict_text(h.company.name,
                                 m.assumptions.eff("terminal_growth"),
                                 price, gordon, exit_mult, reverse_dict),
+        "curves": curves_out(m, reverse_dict),
         "valuation": {
             "gordon": gordon,
             "exit_multiple": exit_mult,
