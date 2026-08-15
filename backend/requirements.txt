@@ -1,0 +1,11 @@
+# Production dependencies only — mirrors [project.dependencies] in
+# pyproject.toml. Dev-group tools (pytest, ruff, formulas/LibreOffice for the
+# Excel round-trip test) are not needed to run the API and are excluded.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+pandas>=2.2
+numpy>=2.0
+openpyxl>=3.1
+pydantic>=2.8
+pyyaml>=6.0
