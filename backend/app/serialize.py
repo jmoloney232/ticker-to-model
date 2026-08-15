@@ -305,6 +305,102 @@ def curves_out(m: ModelResult, reverse_dict: dict | None) -> dict:
     }}
 
 
+# ── warnings digest (Summary tab) ────────────────────────────────────────────
+# Warnings rewritten as sentences and grouped; nothing dropped — every entry
+# carries its code(s) and count so the Audit tab can expand it. coverage_low
+# never folds and always leads.
+
+
+def _yrs(group: list[dict]) -> list[int]:
+    return sorted({w["fiscal_year"] for w in group
+                   if w.get("fiscal_year") is not None})
+
+
+def _digest_unmapped(group: list[dict], company: str) -> str:
+    n = len(group)
+    if n == 1:
+        w = group[0]
+        return (f"{company} doesn't report {w.get('item') or 'one minor item'}"
+                " as its own line; it was carried at zero, with a note.")
+    years = _yrs(group)
+    span = f" across {len(years)} fiscal years" if len(years) > 1 else ""
+    return (f"{company} doesn't report every minor line item separately; "
+            f"{n} optional lines{span} were carried at zero, each noted.")
+
+
+def _digest_restated(group: list[dict], company: str) -> str:
+    n = len(group)
+    figure = "One prior-period figure" if n == 1 else \
+        f"{n} prior-period figures"
+    return (f"{figure} changed in later filings; the restated numbers are "
+            "used — the right basis for forecasting.")
+
+
+def _digest_week53(group: list[dict], company: str) -> str:
+    years = ", ".join(f"FY{y}" for y in _yrs(group)) or "One year"
+    return (f"{years} ran 53 weeks, so growth against adjacent years is "
+            "inflated by roughly 1.9%.")
+
+
+def _digest_share_derived(group: list[dict], company: str) -> str:
+    return (f"Share counts are derived as net income ÷ EPS because "
+            f"{company} reports share data by class; the derivation is "
+            "disclosed on every per-share figure.")
+
+
+def _digest_interest_imputed(group: list[dict], company: str) -> str:
+    return (f"{company} reports debt but no interest expense line, so "
+            "interest is imputed at the synthetic cost of debt rather than "
+            "silently zero.")
+
+
+def _digest_split(group: list[dict], company: str) -> str:
+    return ("Share and per-share history is recast for stock splits — "
+            "labeled as splits, not restatements.")
+
+
+def _digest_residual(group: list[dict], company: str) -> str:
+    n = len(group)
+    years = "one year" if n == 1 else f"{n} years"
+    return (f"The cash flow statement leaves a small unreconciled residual "
+            f"in {years} — below the materiality bar (1% of revenue, 5% of "
+            "gross flows), quantified per year.")
+
+
+_DIGEST_TEMPLATES = {
+    "unmapped_item": _digest_unmapped,
+    "restated": _digest_restated,
+    "week53": _digest_week53,
+    "share_count_derived": _digest_share_derived,
+    "interest_imputed": _digest_interest_imputed,
+    "split_adjustment": _digest_split,
+    "immaterial_cash_residual": _digest_residual,
+}
+
+
+def warnings_digest(warnings: list[dict], company: str) -> list[dict]:
+    groups: dict[tuple[str, str], list[dict]] = {}
+    for w in warnings:
+        groups.setdefault((w["code"], w["severity"]), []).append(w)
+
+    entries = []
+    for (code, severity), group in groups.items():
+        hard = code == "coverage_low"
+        template = _DIGEST_TEMPLATES.get(code)
+        if template:
+            text = template(group, company)
+        else:
+            text = group[0]["message"]
+            if len(group) > 1:
+                text += f" (+{len(group) - 1} more like this)"
+        entries.append({"text": text, "codes": [code], "count": len(group),
+                        "severity": severity, "hard": hard})
+    # hard first, then warnings by weight, then notes
+    entries.sort(key=lambda e: (not e["hard"], e["severity"] == "info",
+                                -e["count"]))
+    return entries
+
+
 # direction cues for the headline drivers — why the arrow points that way
 _DRIVER_NOTES = {
     "wacc": "set by beta, ERP and the 10Y · future cash is worth less today",
@@ -391,6 +487,7 @@ def serialize_model(m: ModelResult, preset: Preset | None,
     gordon = _leg(m, "gordon", price)
     exit_mult = _leg(m, "exit_multiple", price)
     reverse_dict = _reverse_out(reverse)
+    warnings = warnings_out(m)
     return {
         "status": "ok",
         "ticker": m.ticker,
@@ -440,7 +537,9 @@ def serialize_model(m: ModelResult, preset: Preset | None,
         "checks": [{"id": r.check_id, "severity": r.severity,
                     "status": r.status, "magnitude": r.magnitude,
                     "detail": r.detail} for r in m.checks.results],
-        "warnings": warnings_out(m),
+        "warnings": warnings,
+        "warnings_digest": warnings_digest(warnings,
+                                           short_name(h.company.name)),
         "coverage": ({"assets_named_share": cov.assets_named_share,
                       "liabilities_named_share": cov.liabilities_named_share,
                       "expenses_named_share": cov.expenses_named_share}
