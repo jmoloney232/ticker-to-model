@@ -58,6 +58,12 @@ export function fetchMethodology(): Promise<MethodologyDoc> {
   );
 }
 
+export function fetchAuditGuide(): Promise<{ markdown: string }> {
+  return fetch(`${BASE}/api/audit-guide`).then((r) =>
+    handle<{ markdown: string }>(r),
+  );
+}
+
 export function decodeCode(
   code: string,
 ): Promise<{ preset: string | null; overrides: Record<string, number | boolean> }> {

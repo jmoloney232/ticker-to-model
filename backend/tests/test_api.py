@@ -295,3 +295,11 @@ class TestScreenEqualsDownload:
         r = client.get(f"/api/workbook/JPM.xlsx?valuation_date={VD}")
         assert r.status_code == 409
         assert "not supported" in r.json()["detail"]
+
+
+def test_audit_guide_served_as_markdown_data(client):
+    """The committed audit guide reaches the Audit tab as data — the
+    frontend renders a safe subset, no HTML passes through."""
+    body = client.get("/api/audit-guide").json()
+    assert "markdown" in body
+    assert body["markdown"].startswith("# Financial Assumptions")

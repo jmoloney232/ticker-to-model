@@ -80,6 +80,66 @@ export interface Quote {
   staleness: string;
 }
 
+export interface Verdict {
+  text: string;
+  state: string; // "ok" | "negative_equity" | "no_gordon" | "no_legs"
+}
+
+export interface Curve {
+  leg: string;
+  domain: [number, number];
+  points: [number, number | null][]; // (assumption value, per-share) — engine-computed
+  landmarks: {
+    derived: number;
+    current: number;
+    market_implied: number | null;
+    rf: number | null;
+    block: number;
+  };
+}
+
+export interface Driver {
+  name: string;
+  label: string;
+  direction: "up" | "down"; // value moves with the input / against it
+  step_label: string;
+  impact_per_share: number;
+  note: string;
+  composite: boolean;
+  leg: string;
+}
+
+export interface DigestEntry {
+  text: string;
+  codes: string[];
+  count: number;
+  severity: "warn" | "info";
+  hard: boolean;
+}
+
+export interface ProjectionRow {
+  fiscal_year: number;
+  fye: string;
+  income: Record<string, number>;
+  balance: Record<string, number>;
+  cashflow: Record<string, number>;
+}
+
+export interface HistoryFact {
+  value: number;
+  source: string;
+  restated: boolean;
+}
+
+export interface HistoryPeriod {
+  fiscal_year: number;
+  end: string;
+  is_53_week: boolean;
+  income: Record<string, HistoryFact>;
+  balance: Record<string, HistoryFact>;
+  cashflow: Record<string, HistoryFact>;
+}
+
 export interface ModelOk {
   status: "ok";
   ticker: string;
@@ -87,6 +147,7 @@ export interface ModelOk {
   code: string;
   company: {
     name: string;
+    short_name: string; // prose name, server-derived ("Microsoft")
     cik: string;
     sic: string | null;
     sic_description: string | null;
@@ -106,12 +167,19 @@ export interface ModelOk {
   preset: { name: string; title: string; rationale: string } | null;
   assumptions: AssumptionRow[];
   provenance_counts: { derived: number; preset: number; user: number };
+  verdict: Verdict;
+  curves: Record<string, Curve>;
+  drivers: Driver[];
   valuation: { gordon: Leg; exit_multiple: Leg };
   wacc: Record<string, unknown>;
+  ufcf: Record<string, number>[];
+  projections: ProjectionRow[];
   crosschecks: Record<string, number | null>;
   sensitivity: Record<string, Grid>;
   checks: Check[];
   warnings: Warning[];
+  warnings_digest: DigestEntry[];
+  history: HistoryPeriod[];
   coverage: {
     assets_named_share: number;
     liabilities_named_share: number;
@@ -122,6 +190,7 @@ export interface ModelOk {
 
 export interface ModelBlocked {
   status: "refused" | "unsupported" | "preset_unavailable";
+  verdict?: string; // plain-English sentence (refusals; not preset_unavailable)
   reason: Reason;
 }
 

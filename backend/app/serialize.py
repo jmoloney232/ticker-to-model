@@ -495,7 +495,9 @@ def serialize_model(m: ModelResult, preset: Preset | None,
         "code": encode_assumption_set(
             preset.name if preset else None, overrides or None),
         "company": {
-            "name": h.company.name, "cik": h.company.cik,
+            "name": h.company.name,
+            "short_name": short_name(h.company.name),
+            "cik": h.company.cik,
             "sic": h.company.sic, "sic_description": h.company.sic_description,
             "fye_anchor": h.company.fye_anchor,
             "cost_structure": h.cost_structure,

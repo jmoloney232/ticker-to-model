@@ -52,6 +52,7 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
     code: "abc123",
     company: {
       name: "MICROSOFT CORP",
+      short_name: "Microsoft",
       cik: "789019",
       sic: "7372",
       sic_description: "Services-Prepackaged Software",
@@ -65,6 +66,61 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
       beta: null,
     },
     preset: null,
+    verdict: {
+      text:
+        "At 2.5% long-run growth, Microsoft is worth $281 a share — 44% " +
+        "below its $498 price. The market is pricing in 6.2% growth " +
+        "forever — on this model's other assumptions.",
+      state: "ok",
+    },
+    curves: {
+      terminal_growth: {
+        leg: "gordon",
+        domain: [-0.02, 0.0973],
+        points: [
+          [-0.02, 231.5],
+          [0.005, 255.1],
+          [0.025, 280.99],
+          [0.0468, 330.4],
+          [0.0624, 498.37],
+          [0.08, 640.2],
+          [0.0973, 812.7],
+        ],
+        landmarks: {
+          derived: 0.025,
+          current: 0.025,
+          market_implied: 0.0624,
+          rf: 0.0468,
+          block: 0.0973,
+        },
+      },
+    },
+    drivers: [
+      {
+        name: "wacc",
+        label: "Discount rate (WACC)",
+        direction: "down",
+        step_label: "±1pp",
+        impact_per_share: 37.2,
+        note: "set by beta, ERP and the 10Y · future cash is worth less today",
+        composite: true,
+        leg: "gordon",
+      },
+      {
+        name: "terminal_growth",
+        label: "Long-run growth (terminal g)",
+        direction: "up",
+        step_label: "±1pp",
+        impact_per_share: 30.1,
+        note: "compounds forever in the terminal value",
+        composite: false,
+        leg: "gordon",
+      },
+    ],
+    warnings_digest: [],
+    ufcf: [],
+    projections: [],
+    history: [],
     assumptions: [
       row(),
       row({ name: "terminal_growth", label: "Terminal growth", value: 0.025 }),

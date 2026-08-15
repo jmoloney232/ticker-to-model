@@ -10,7 +10,7 @@ const GROUP_THRESHOLD = 4; // repeats of one code fold into a disclosure
 
 const isInfo = (w: Warning) => w.severity === "info";
 
-function Row({ w }: { w: Warning }) {
+function Row({ w, showCode }: { w: Warning; showCode?: boolean }) {
   const info = isInfo(w);
   return (
     <div className={`caveat-row${info ? " note" : ""}`}>
@@ -21,6 +21,7 @@ function Row({ w }: { w: Warning }) {
         {info ? "○" : "△"}
       </span>
       <span className="text">{w.message}</span>
+      {showCode && <span className="code-chip">{w.code}</span>}
       <span className="origin">
         {w.origin}
         {info ? " · note" : ""}
@@ -32,9 +33,11 @@ function Row({ w }: { w: Warning }) {
 export function Caveats({
   warnings,
   checks,
+  showCodes = false,
 }: {
   warnings: Warning[];
   checks: Check[];
+  showCodes?: boolean;
 }) {
   const failed = checks.filter((c) => c.status === "fail");
   const valid = failed.length === 0;
@@ -89,7 +92,7 @@ export function Caveats({
       )}
       {blocks.map((b, i) =>
         b.kind === "one" ? (
-          <Row key={i} w={b.w} />
+          <Row key={i} w={b.w} showCode={showCodes} />
         ) : (
           <details key={i} className="caveat-group">
             <summary>
@@ -110,7 +113,7 @@ export function Caveats({
               <span className="count">expand</span>
             </summary>
             {b.ws.map((w, j) => (
-              <Row key={j} w={w} />
+              <Row key={j} w={w} showCode={showCodes} />
             ))}
           </details>
         ),

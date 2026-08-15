@@ -84,6 +84,7 @@
   --text-4-dark: rgba(242, 242, 243, 0.5);
 
   /* tints (steel at data alphas) */
+  --warn-tint: rgba(168, 117, 42, 0.1); /* slider warned zone */
   --tint-edited: rgba(89, 128, 166, 0.09);
   --tint-selected: rgba(89, 128, 166, 0.11);
   --tint-hover: rgba(89, 128, 166, 0.1);

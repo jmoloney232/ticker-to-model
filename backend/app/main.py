@@ -155,6 +155,20 @@ def create_app(edgar_for=None, provider_for=None,
         return {"presets": [serialize_preset(p)
                             for p in app.state.presets.values()]}
 
+    @app.get("/api/audit-guide")
+    def audit_guide():
+        """The committed audit guide (docs/financial-assumptions.md),
+        rendered on the Audit tab. Markdown as data — the frontend renders
+        a safe subset, no HTML passes through."""
+        from pathlib import Path
+        path = (Path(__file__).resolve().parents[2] / "docs"
+                / "financial-assumptions.md")
+        if not path.exists():
+            raise HTTPException(
+                404, detail="The audit guide isn't present in this "
+                            "deployment.")
+        return {"markdown": path.read_text()}
+
     @app.get("/api/methodology")
     def methodology():
         doc = yaml.safe_load(

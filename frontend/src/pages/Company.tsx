@@ -1,7 +1,11 @@
 /* The dashboard: derive → preset → overrides → POST /api/model, debounced.
-   Assumption edits recompute server-side against the cached inputs (never a
-   refetch upstream — API contract); the URL carries the canonical share code;
-   the workbook download uses the same code, so screen == download. */
+   Redesign (owner sign-off 2026-08-15): three tabs — Summary (the answer),
+   Model (the work), Audit (the evidence) — expanding in place, never
+   navigating away. Keep the concepts, hide the conventions: Summary carries
+   the verdict, the terminal-growth slider, and the ranked drivers; the full
+   density lives one tab (or one toggle) away. Assumption edits recompute
+   server-side against cached inputs; the URL carries the canonical share
+   code; the workbook download uses the same code, so screen == download. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { navigate } from "../App";
@@ -13,35 +17,63 @@ import {
   workbookUrl,
 } from "../api";
 import { Assumptions } from "../components/Assumptions";
+import { AuditTab } from "../components/AuditTab";
 import { Caveats, CheckBand } from "../components/Caveats";
+import { Drivers } from "../components/Drivers";
+import { GrowthSlider } from "../components/GrowthSlider";
 import { Hero } from "../components/Hero";
 import { Sensitivity } from "../components/Sensitivity";
 import { reasonDetail, StateCard } from "../components/StateCard";
+import { ProjectionsTable } from "../components/Statements";
+import { SummaryCaveats } from "../components/SummaryCaveats";
 import { fmtPrice } from "../format";
 import type { ModelBlocked, ModelOk, PresetInfo } from "../types";
 
 const DEBOUNCE_MS = 400;
+const TABS = ["summary", "model", "audit"] as const;
+type Tab = (typeof TABS)[number];
 
 type Overrides = Record<string, number | boolean>;
 
-function Header({
-  ticker,
-  model,
-  presets,
-  activePreset,
-  onPreset,
-}: {
-  ticker: string;
-  model: ModelOk | null;
-  presets: PresetInfo[];
-  activePreset: string | null;
-  onPreset: (name: string | null) => void;
-}) {
+/* localStorage can be absent (test env) or throw (private browsing) —
+   the toggle degrades to per-session state */
+function storedDetail(): boolean {
+  try {
+    return window.localStorage.getItem("ttm-detail") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function storeDetail(on: boolean): void {
+  try {
+    window.localStorage.setItem("ttm-detail", on ? "1" : "0");
+  } catch {
+    /* per-session only */
+  }
+}
+
+function tabFromUrl(): Tab {
+  const t = new URLSearchParams(window.location.search).get("tab");
+  return (TABS as readonly string[]).includes(t ?? "") ? (t as Tab) : "summary";
+}
+
+function setUrlParam(key: string, value: string | null) {
+  const params = new URLSearchParams(window.location.search);
+  if (value == null) params.delete(key);
+  else params.set(key, value);
+  const q = params.toString();
+  window.history.replaceState(
+    null,
+    "",
+    window.location.pathname + (q ? `?${q}` : ""),
+  );
+}
+
+function Header({ ticker, model }: { ticker: string; model: ModelOk | null }) {
   const [t, setT] = useState(ticker);
   const price = model?.market.price;
   const basis = model?.company.filing_basis;
-  const wacc = model ? (model.wacc.wacc as number) : null;
-  const beta = model ? (model.wacc.beta_used as number | null) : null;
   return (
     <div className="hd">
       <div className="hd-id">
@@ -73,12 +105,82 @@ function Header({
             {basis.filed ? ` · filed ${basis.filed}` : ""}
           </span>
         )}
-        {wacc != null && (
-          <span>
-            WACC {(wacc * 100).toFixed(2)}%
-            {beta != null ? ` · β ${beta.toFixed(2)}` : ""}
-          </span>
-        )}
+        {model && <span>valued {model.valuation_date}</span>}
+      </div>
+    </div>
+  );
+}
+
+function TabBar({
+  tab,
+  onTab,
+  model,
+  detail,
+  onDetail,
+}: {
+  tab: Tab;
+  onTab: (t: Tab) => void;
+  model: ModelOk;
+  detail: boolean;
+  onDetail: (on: boolean) => void;
+}) {
+  const counts: Record<Tab, string> = {
+    summary: "",
+    model: `${model.assumptions.filter((a) => a.editable).length} assumptions`,
+    audit: `${model.warnings.length} items`,
+  };
+  return (
+    <div className="tabs" role="tablist">
+      {TABS.map((t) => (
+        <button
+          key={t}
+          type="button"
+          role="tab"
+          aria-selected={tab === t}
+          className={`tab${tab === t ? " on" : ""}`}
+          onClick={() => onTab(t)}
+        >
+          {t}
+          {counts[t] && <span className="n">{counts[t]}</span>}
+        </button>
+      ))}
+      {tab === "summary" && (
+        <button
+          type="button"
+          className="detail-toggle"
+          aria-pressed={detail}
+          onClick={() => onDetail(!detail)}
+        >
+          <span>full detail</span>
+          <span className={`switch${detail ? " on" : ""}`} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* preset strip — Model tab (owner layout: Summary carries the answer) */
+function PresetStrip({
+  presets,
+  model,
+  activePreset,
+  onPreset,
+}: {
+  presets: PresetInfo[];
+  model: ModelOk;
+  activePreset: string | null;
+  onPreset: (name: string | null) => void;
+}) {
+  const wacc = model.wacc.wacc as number;
+  const beta = model.wacc.beta_used as number | null;
+  return (
+    <div className="preset-band">
+      <div className="preset-band-meta">
+        <span className="kicker">Assumption presets</span>
+        <span className="wacc-note">
+          WACC {(wacc * 100).toFixed(2)}%
+          {beta != null ? ` · β ${beta.toFixed(2)}` : ""}
+        </span>
       </div>
       <div className="presets">
         {presets.map((p) => {
@@ -104,6 +206,30 @@ function Header({
   );
 }
 
+function Actions({ ticker, model }: { ticker: string; model: ModelOk }) {
+  return (
+    <div className="actions">
+      <span className="dl">
+        <a className="dl-btn" href={workbookUrl(ticker, model.code)}>
+          Download workbook · xlsx
+        </a>
+        <span className="regmark tl" />
+        <span className="regmark br" />
+      </span>
+      <a
+        className="meth-link"
+        href="/methodology"
+        onClick={(e) => {
+          e.preventDefault();
+          navigate("/methodology");
+        }}
+      >
+        Methodology →
+      </a>
+    </div>
+  );
+}
+
 export function Company({ ticker }: { ticker: string }) {
   const [seeded, setSeeded] = useState(false);
   const [preset, setPreset] = useState<string | null>(null);
@@ -114,12 +240,23 @@ export function Company({ ticker }: { ticker: string }) {
   const [busy, setBusy] = useState(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
   const [presets, setPresets] = useState<PresetInfo[]>([]);
+  const [tab, setTabState] = useState<Tab>(tabFromUrl);
+  const [detail, setDetailState] = useState(storedDetail);
   const lastGood = useRef<{ preset: string | null; overrides: Overrides }>({
     preset: null,
     overrides: {},
   });
   const firstLoad = useRef(true);
   const [retryTick, setRetryTick] = useState(0);
+
+  const setTab = (t: Tab) => {
+    setTabState(t);
+    setUrlParam("tab", t === "summary" ? null : t);
+  };
+  const setDetail = (on: boolean) => {
+    setDetailState(on);
+    storeDetail(on);
+  };
 
   useEffect(() => {
     fetchPresets()
@@ -152,7 +289,7 @@ export function Company({ ticker }: { ticker: string }) {
       .catch(() => {
         /* malformed code: drop it, build derived defaults */
         if (!alive) return;
-        window.history.replaceState(null, "", window.location.pathname);
+        setUrlParam("c", null);
         setSeeded(true);
       });
     return () => {
@@ -176,10 +313,7 @@ export function Company({ ticker }: { ticker: string }) {
             setOverrideError(null);
             lastGood.current = { preset, overrides };
             const hasSet = preset != null || Object.keys(overrides).length > 0;
-            const url =
-              window.location.pathname +
-              (hasSet && resp.code ? `?c=${encodeURIComponent(resp.code)}` : "");
-            window.history.replaceState(null, "", url);
+            setUrlParam("c", hasSet && resp.code ? resp.code : null);
           } else {
             setBlocked(resp);
           }
@@ -227,20 +361,20 @@ export function Company({ ticker }: { ticker: string }) {
   /* ── states ─────────────────────────────────────────────────────────── */
 
   if (failed) {
-    const { status, detail } = failed;
+    const { status, detail: d } = failed;
     return (
       <div className="shell">
         {status === 404 ? (
           <StateCard
             kicker="Unknown ticker"
             title={`${ticker} isn’t in the EDGAR ticker file`}
-            message={detail}
+            message={d}
           />
         ) : status === 503 || status === 0 ? (
           <StateCard
             kicker="Data source unavailable"
             title="EDGAR or market data is unreachable"
-            message={`${detail} Nothing has been cached for this ticker yet, so there is no model to fall back to — try again in a minute.`}
+            message={`${d} Nothing has been cached for this ticker yet, so there is no model to fall back to — try again in a minute.`}
           >
             <span className="dl">
               <button
@@ -258,7 +392,7 @@ export function Company({ ticker }: { ticker: string }) {
           <StateCard
             kicker={`Error ${status}`}
             title="That request didn’t work"
-            message={detail}
+            message={d}
           />
         )}
       </div>
@@ -294,6 +428,8 @@ export function Company({ ticker }: { ticker: string }) {
         </div>
       );
     }
+    /* plain sentence leads (server verdict); the technical reason and
+       machine detail stay on the card for the audit-minded */
     return (
       <div className="shell">
         <StateCard
@@ -307,8 +443,13 @@ export function Company({ ticker }: { ticker: string }) {
               ? `${ticker} isn’t modeled here`
               : `${ticker} refused: ${r.code.replace(/_/g, " ")}`
           }
-          message={r.message}
-          detail={reasonDetail(r)}
+          message={blocked.verdict ?? r.message}
+          detail={[
+            blocked.verdict ? r.message : null,
+            reasonDetail(r),
+          ]
+            .filter(Boolean)
+            .join("\n")}
         />
       </div>
     );
@@ -331,8 +472,7 @@ export function Company({ ticker }: { ticker: string }) {
     );
   }
 
-  /* the active preset's authored field notes (fields[].note), for the
-     rule inspector — matched on the preset the model actually applied */
+  /* the active preset's authored field notes for the rule inspector */
   const applied = model.preset
     ? presets.find((p) => p.name === model.preset?.name)
     : undefined;
@@ -342,58 +482,130 @@ export function Company({ ticker }: { ticker: string }) {
       )
     : undefined;
 
+  const curve = model.curves["terminal_growth"];
+  const gordonReason = !model.valuation.gordon.available
+    ? model.valuation.gordon.reason.message
+    : null;
+  const company = model.company.short_name || model.company.name;
+
+  const modelDensity = (
+    <>
+      <div className="cols">
+        <div className="amain">
+          <Assumptions
+            rows={model.assumptions}
+            overrideCount={Object.keys(overrides).length}
+            overrideError={overrideError}
+            presetNotes={presetNotes}
+            onOverride={onOverride}
+            onResetAll={() => {
+              setOverrideError(null);
+              setOverrides({});
+            }}
+          />
+          <Caveats warnings={model.warnings} checks={model.checks} />
+          <Actions ticker={ticker} model={model} />
+        </div>
+        <Sensitivity model={model} />
+      </div>
+    </>
+  );
+
   return (
     <div className="shell">
       <div className="board">
-        <Header
-          ticker={ticker}
+        <Header ticker={ticker} model={model} />
+        <TabBar
+          tab={tab}
+          onTab={setTab}
           model={model}
-          presets={presets}
-          activePreset={preset}
-          onPreset={(p) => {
-            setOverrideError(null);
-            setPreset(p);
-          }}
+          detail={detail}
+          onDetail={setDetail}
         />
         <div className={`busybar${busy ? " on" : ""}`} />
-        <Hero model={model} />
-        <CheckBand checks={model.checks} />
-        <div className="cols">
-          <div className="amain">
-            <Assumptions
-              rows={model.assumptions}
-              overrideCount={Object.keys(overrides).length}
-              overrideError={overrideError}
-              presetNotes={presetNotes}
-              onOverride={onOverride}
-              onResetAll={() => {
+
+        {tab === "summary" && (
+          <>
+            <Hero model={model} />
+            <CheckBand checks={model.checks} />
+            <div className="verdict">
+              <div className="kicker">Verdict</div>
+              <p>{model.verdict.text}</p>
+            </div>
+            {curve ? (
+              <GrowthSlider
+                curve={curve}
+                price={model.market.price.value}
+                onCommit={(g) =>
+                  onOverride(
+                    "terminal_growth",
+                    g === curve.landmarks.derived ? null : g,
+                  )
+                }
+              />
+            ) : (
+              <div className="sliderband">
+                <span className="kicker">Long-run growth (terminal g)</span>
+                <div className="slider-cap">
+                  No slider here: {gordonReason ?? "the perpetuity leg is unavailable."}
+                </div>
+              </div>
+            )}
+            {overrideError && (
+              <div className="override-err">{overrideError}</div>
+            )}
+            {detail ? (
+              modelDensity
+            ) : (
+              <>
+                <Drivers drivers={model.drivers} company={company} />
+                <SummaryCaveats
+                  digest={model.warnings_digest}
+                  warnings={model.warnings}
+                  checks={model.checks}
+                />
+                <div className="prov">
+                  <span className="glyph" aria-hidden>
+                    ■
+                  </span>
+                  <span>
+                    Every assumption is derived from {company}&rsquo;s own SEC
+                    filings by documented rules — nothing hand-picked
+                    {model.provenance_counts.user > 0
+                      ? `, ${model.provenance_counts.user} edited by you`
+                      : ""}
+                    . Edit any of them in Model.
+                  </span>
+                </div>
+                <Actions ticker={ticker} model={model} />
+              </>
+            )}
+          </>
+        )}
+
+        {tab === "model" && (
+          <>
+            <CheckBand checks={model.checks} />
+            <PresetStrip
+              presets={presets}
+              model={model}
+              activePreset={preset}
+              onPreset={(p) => {
                 setOverrideError(null);
-                setOverrides({});
+                setPreset(p);
               }}
             />
-            <Caveats warnings={model.warnings} checks={model.checks} />
-            <div className="actions">
-              <span className="dl">
-                <a className="dl-btn" href={workbookUrl(ticker, model.code)}>
-                  Download workbook · xlsx
-                </a>
-                <span className="regmark tl" />
-                <span className="regmark br" />
-              </span>
-              <a
-                className="meth-link"
-                href="/methodology"
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate("/methodology");
-                }}
-              >
-                Methodology →
-              </a>
-            </div>
-          </div>
-          <Sensitivity model={model} />
-        </div>
+            {modelDensity}
+            <ProjectionsTable rows={model.projections} />
+          </>
+        )}
+
+        {tab === "audit" && (
+          <>
+            <CheckBand checks={model.checks} />
+            <AuditTab model={model} />
+          </>
+        )}
       </div>
     </div>
   );
