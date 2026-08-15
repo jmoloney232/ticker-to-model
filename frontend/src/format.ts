@@ -15,6 +15,8 @@ export function fmtValue(row: AssumptionRow): string {
       return v.toFixed(2);
     case "days":
       return v.toFixed(1);
+    case "years":
+      return v.toFixed(0);
     case "shares":
       return (v / 1e9).toFixed(2);
     default:
@@ -31,6 +33,8 @@ export function unitSuffix(unit: string): string {
       return "×";
     case "days":
       return "days";
+    case "years":
+      return "years";
     case "shares":
       return "B sh";
     default:

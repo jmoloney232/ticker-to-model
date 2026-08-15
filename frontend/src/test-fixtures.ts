@@ -24,6 +24,7 @@ export function warning(over: Partial<Warning> = {}): Warning {
     message: "FY2022: interest_income unmapped; treated as 0.",
     fiscal_year: 2022,
     item: "interest_income",
+    severity: "warn",
     detail: {},
     ...over,
   };

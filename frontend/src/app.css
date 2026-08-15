@@ -89,12 +89,18 @@ button {
 .hd-meta {
   flex: 1;
   display: flex;
+  flex-wrap: wrap; /* five preset tiles: wrap between items, never inside one */
+  align-content: center;
   align-items: center;
-  gap: 24px;
-  padding: 0 18px;
+  column-gap: 24px;
+  row-gap: 2px;
+  padding: 6px 18px;
   font: var(--type-body-sm);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+.hd-meta > span {
+  white-space: nowrap;
 }
 .chip-stale {
   font: var(--type-glyph);
@@ -106,14 +112,16 @@ button {
   display: flex;
   align-items: stretch;
 }
-.preset {
-  width: 172px;
+/* scoped under .presets: the provenance glyph also carries a bare "preset"
+   class, and an unscoped .preset rule would restyle it */
+.presets .preset {
+  width: 156px; /* ds: 172 at 4 tiles — slimmed so 5 leave the meta strip room */
   padding: 8px 12px;
   border-left: var(--hair) solid var(--line-soft);
   text-align: left;
   display: block;
 }
-.preset.on {
+.presets .preset.on {
   background: var(--tint-selected);
 }
 .preset-head {
@@ -125,7 +133,7 @@ button {
   font: var(--type-glyph);
   color: var(--text-4);
 }
-.preset.on .preset-glyph {
+.presets .preset.on .preset-glyph {
   color: var(--steel-deep);
 }
 .preset-name {
@@ -428,6 +436,28 @@ button {
 .arow-val .flagbtn {
   font: 500 12.5px/1.35 var(--font-mono);
 }
+.arow-val .seg {
+  display: flex;
+  gap: 2px;
+}
+.arow-val .segbtn {
+  font: 500 12.5px/1.35 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-4);
+  padding: 0 4px;
+  border-bottom: var(--hair) solid transparent;
+}
+.arow-val .segbtn:hover {
+  color: var(--text-2);
+}
+.arow-val .segbtn.on {
+  color: inherit;
+  border-bottom-color: var(--line-strong);
+}
+.arow.edited .arow-val .segbtn.on {
+  color: var(--steel-deep);
+  border-bottom-color: var(--steel-deep);
+}
 .arow-val .unit {
   font: 400 9px/1 var(--font-body);
   color: var(--text-4);
@@ -484,6 +514,19 @@ button {
   margin-top: 4px;
   max-width: 80ch;
 }
+.inspector .rule-note {
+  font: 400 11px/1.45 var(--font-body);
+  color: var(--text-3);
+  margin-top: 3px;
+  max-width: 80ch;
+}
+.inspector .rule-note .note-k {
+  font: var(--type-label-sm);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-4);
+  margin-right: 4px;
+}
 .override-err {
   padding: 6px 16px;
   background: var(--tint-band);
@@ -517,9 +560,16 @@ button {
 .caveat-row .glyph.hard {
   color: var(--down);
 }
+.caveat-row .glyph.info,
+.caveat-group summary .glyph.info {
+  color: var(--steel);
+}
 .caveat-row .text {
   font: 400 11px/1.4 var(--font-body);
   color: var(--text-2);
+}
+.caveat-row.note .text {
+  color: var(--text-3);
 }
 .caveat-row .origin {
   font: 500 9px/1.8 var(--font-mono);
@@ -923,6 +973,11 @@ button {
 }
 .pfield .frule {
   color: var(--text-2);
+}
+.pfield .fnote {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-3);
 }
 .pfields {
   margin-top: 8px;

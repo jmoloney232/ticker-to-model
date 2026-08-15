@@ -331,6 +331,17 @@ export function Company({ ticker }: { ticker: string }) {
     );
   }
 
+  /* the active preset's authored field notes (fields[].note), for the
+     rule inspector — matched on the preset the model actually applied */
+  const applied = model.preset
+    ? presets.find((p) => p.name === model.preset?.name)
+    : undefined;
+  const presetNotes = applied
+    ? Object.fromEntries(
+        applied.fields.filter((f) => f.note).map((f) => [f.field, f.note!]),
+      )
+    : undefined;
+
   return (
     <div className="shell">
       <div className="board">
@@ -353,6 +364,7 @@ export function Company({ ticker }: { ticker: string }) {
               rows={model.assumptions}
               overrideCount={Object.keys(overrides).length}
               overrideError={overrideError}
+              presetNotes={presetNotes}
               onOverride={onOverride}
               onResetAll={() => {
                 setOverrideError(null);

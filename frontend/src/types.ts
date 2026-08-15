@@ -24,6 +24,7 @@ export interface Warning {
   message: string;
   fiscal_year: number | null;
   item: string | null;
+  severity: "warn" | "info"; // info = disclosure, not defect
   detail: Record<string, unknown>;
 }
 
@@ -140,6 +141,7 @@ export interface PresetInfo {
     solver: string | null;
     target: string | null;
     optional: boolean;
+    note: string | null; // source + as-of for literals (e.g. Damodaran ERP)
   }[];
 }
 

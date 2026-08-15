@@ -1,22 +1,30 @@
 /* Every inherited warning, structured, none droppable (non-negotiable #3).
-   coverage_low is the hard, non-dismissible warning — marked in rust. */
+   coverage_low is the hard, non-dismissible warning — marked in rust.
+   severity "info" is a disclosure, not a defect — rendered as a quiet note,
+   counted separately, never folded into a warn group. */
 
 import type { Check, Warning } from "../types";
 
 const HARD_CODES = new Set(["coverage_low"]);
 const GROUP_THRESHOLD = 4; // repeats of one code fold into a disclosure
 
+const isInfo = (w: Warning) => w.severity === "info";
+
 function Row({ w }: { w: Warning }) {
+  const info = isInfo(w);
   return (
-    <div className="caveat-row">
+    <div className={`caveat-row${info ? " note" : ""}`}>
       <span
-        className={`glyph${HARD_CODES.has(w.code) ? " hard" : ""}`}
+        className={`glyph${HARD_CODES.has(w.code) ? " hard" : ""}${info ? " info" : ""}`}
         aria-hidden
       >
-        △
+        {info ? "○" : "△"}
       </span>
       <span className="text">{w.message}</span>
-      <span className="origin">{w.origin}</span>
+      <span className="origin">
+        {w.origin}
+        {info ? " · note" : ""}
+      </span>
     </div>
   );
 }
@@ -30,20 +38,30 @@ export function Caveats({
 }) {
   const failed = checks.filter((c) => c.status === "fail");
   const valid = failed.length === 0;
+  const nInfo = warnings.filter(isInfo).length;
+  const nWarn = warnings.length - nInfo;
+  const countText =
+    nWarn > 0 && nInfo > 0
+      ? `${nWarn} · ${nInfo} note${nInfo > 1 ? "s" : ""}`
+      : nInfo > 0
+        ? `${nInfo} note${nInfo > 1 ? "s" : ""}`
+        : `${nWarn}`;
 
   /* Nothing is dropped (owner rule) — a code repeating GROUP_THRESHOLD+
      times renders inside a disclosure instead of as a wall. Hard warnings
-     never fold. */
+     never fold, and the fold key carries severity so an info note never
+     folds into a warn group (or vice versa). Notes render after warnings. */
+  const ordered = [...warnings.filter((w) => !isInfo(w)), ...warnings.filter(isInfo)];
   const byCode = new Map<string, Warning[]>();
-  for (const w of warnings) {
-    const key = `${w.origin}:${w.code}`;
+  for (const w of ordered) {
+    const key = `${w.origin}:${w.code}:${w.severity}`;
     byCode.set(key, [...(byCode.get(key) ?? []), w]);
   }
   const blocks: ({ kind: "one"; w: Warning } | { kind: "many"; ws: Warning[] })[] =
     [];
   const folded = new Set<string>();
-  for (const w of warnings) {
-    const key = `${w.origin}:${w.code}`;
+  for (const w of ordered) {
+    const key = `${w.origin}:${w.code}:${w.severity}`;
     const group = byCode.get(key)!;
     if (group.length >= GROUP_THRESHOLD && !HARD_CODES.has(w.code)) {
       if (!folded.has(key)) {
@@ -58,7 +76,7 @@ export function Caveats({
   return (
     <div className="caveats">
       <div className={`kicker${valid ? "" : " bad"}`}>
-        Caveats — {warnings.length}
+        Caveats — {countText}
         {valid ? ", model valid" : ` · ${failed.length} check(s) FAILED`}
       </div>
       {warnings.length === 0 && valid && (
@@ -75,11 +93,15 @@ export function Caveats({
         ) : (
           <details key={i} className="caveat-group">
             <summary>
-              <span className="glyph" aria-hidden>
-                △
+              <span
+                className={`glyph${isInfo(b.ws[0]) ? " info" : ""}`}
+                aria-hidden
+              >
+                {isInfo(b.ws[0]) ? "○" : "△"}
               </span>
               <span>
                 {b.ws.length}× {b.ws[0].code.replace(/_/g, " ")}
+                {isInfo(b.ws[0]) ? " (notes)" : ""}
                 {" — "}
                 {b.ws[0].item ?? ""} and{" "}
                 {new Set(b.ws.map((w) => w.item)).size - 1} other items across{" "}

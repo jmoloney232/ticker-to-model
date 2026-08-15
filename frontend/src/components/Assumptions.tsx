@@ -9,6 +9,13 @@ import type { AssumptionRow } from "../types";
 
 type Matcher = [group: string, test: (r: AssumptionRow) => boolean];
 
+/* Presentation only — the discrete choices the engine's domain table accepts
+   (backend/engine/assumptions.py _DISCRETE_DOMAINS is the authority; a
+   mismatch here just earns a clean 400 from that one validation path). */
+const DISCRETE: Record<string, number[]> = {
+  forecast_years: [5, 7, 10],
+};
+
 /* Presentation grouping only — an unmatched field lands in "Other" and is
    never dropped. */
 const GROUPS: Matcher[] = [
@@ -30,7 +37,7 @@ const GROUPS: Matcher[] = [
   ],
   [
     "Terminal & horizon",
-    (r) => /(^terminal|^exit_multiple|midyear)/.test(r.name),
+    (r) => /(^terminal|^exit_multiple|^forecast_years|midyear)/.test(r.name),
   ],
   [
     "Shares & bridge",
@@ -106,6 +113,23 @@ function Row({
           >
             {row.value ? "yes" : "no"}
           </button>
+        ) : DISCRETE[row.name] ? (
+          <span className="seg" role="group" aria-label={row.label}>
+            {DISCRETE[row.name].map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                className={`segbtn${row.value === opt ? " on" : ""}`}
+                aria-pressed={row.value === opt}
+                aria-label={`${row.label}: ${opt} ${unitSuffix(row.unit)}`}
+                onClick={() => {
+                  if (row.value !== opt) onOverride(row.name, opt);
+                }}
+              >
+                {opt}
+              </button>
+            ))}
+          </span>
         ) : (
           <input
             aria-label={row.label}
@@ -147,12 +171,15 @@ export function Assumptions({
   overrideError,
   onOverride,
   onResetAll,
+  presetNotes,
 }: {
   rows: AssumptionRow[];
   overrideCount: number;
   overrideError: string | null;
   onOverride: (name: string, value: number | boolean | null) => void;
   onResetAll: () => void;
+  /** field → authored source note of the active preset (fields[].note) */
+  presetNotes?: Record<string, string>;
 }) {
   const [hovered, setHovered] = useState<AssumptionRow | null>(null);
   const groups = groupRows(rows);
@@ -200,20 +227,44 @@ export function Assumptions({
         <div className="acol-l">{renderGroups(groups.slice(0, split))}</div>
         <div>{renderGroups(groups.slice(split))}</div>
       </div>
-      <div className="inspector">
-        <span className="kicker">
-          {hovered
-            ? `Rule behind ${hovered.provenance === "user" ? "the edited" : "the"} default — ${hovered.label}`
-            : "Rule inspector"}
-        </span>
-        <div className="rule-text">
-          {hovered
-            ? hovered.provenance === "user"
-              ? `${hovered.rule} (derived default: ${fmtValue({ ...hovered, value: hovered.derived_default })}${unitSuffix(hovered.unit)})`
-              : hovered.rule
-            : "Hover an assumption to see the derivation rule behind its value."}
+      <Inspector hovered={hovered} presetNotes={presetNotes} />
+    </div>
+  );
+}
+
+function Inspector({
+  hovered,
+  presetNotes,
+}: {
+  hovered: AssumptionRow | null;
+  presetNotes?: Record<string, string>;
+}) {
+  /* The active preset's authored source note (fields[].note) prints beside
+     the rule. The serializer prefixes preset rules with the same note — strip
+     that prefix so the source reads once, in its own register. */
+  const note =
+    hovered?.provenance.startsWith("preset") && presetNotes
+      ? presetNotes[hovered.name]
+      : undefined;
+  let rule = hovered
+    ? hovered.provenance === "user"
+      ? `${hovered.rule} (derived default: ${fmtValue({ ...hovered, value: hovered.derived_default })}${unitSuffix(hovered.unit)})`
+      : hovered.rule
+    : "Hover an assumption to see the derivation rule behind its value.";
+  if (note && rule.startsWith(`${note} — `)) rule = rule.slice(note.length + 3);
+  return (
+    <div className="inspector">
+      <span className="kicker">
+        {hovered
+          ? `Rule behind ${hovered.provenance === "user" ? "the edited" : "the"} default — ${hovered.label}`
+          : "Rule inspector"}
+      </span>
+      <div className="rule-text">{rule}</div>
+      {note && (
+        <div className="rule-note">
+          <span className="note-k">source</span> {note}
         </div>
-      </div>
+      )}
     </div>
   );
 }

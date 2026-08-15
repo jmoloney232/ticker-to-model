@@ -107,6 +107,7 @@ export function Methodology() {
                             ? `solved: ${f.solver ?? ""} → ${f.target ?? ""}`
                             : (f.rule ?? "")}
                         {f.optional ? " (optional)" : ""}
+                        {f.note && <span className="fnote">{f.note}</span>}
                       </span>
                     </div>
                   ))}

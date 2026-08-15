@@ -69,6 +69,62 @@ describe("caveats", () => {
     expect(screen.getAllByText(/coverage 62%/).length).toBe(5);
   });
 
+  it("renders an info item as a quiet note, distinct from a warning", () => {
+    render(
+      <Caveats
+        warnings={[
+          warning({ message: "FY2024: lease liability is 31% of debt." }),
+          warning({
+            origin: "engine",
+            code: "terminal_excess_return_persistent",
+            severity: "info",
+            message: "Terminal ROIC holds 35.7pp above WACC in perpetuity.",
+          }),
+        ]}
+        checks={[]}
+      />,
+    );
+    expect(screen.getByText(/Caveats — 1 · 1 note, model valid/)).toBeTruthy();
+    expect(screen.getAllByText("△").length).toBe(1); // warn glyph only
+    expect(screen.getAllByText("○").length).toBe(1); // note glyph only
+    const note = screen
+      .getByText(/Terminal ROIC holds/)
+      .closest(".caveat-row");
+    expect(note?.className).toContain("note");
+    expect(note?.textContent).toContain("engine · note");
+  });
+
+  it("orders notes after warnings and never folds them into a warn group", () => {
+    const ws = [
+      ...[1, 2].map((i) => warning({ severity: "info", message: `note ${i}` })),
+      ...[1, 2].map((i) => warning({ message: `warn ${i}` })),
+    ];
+    render(<Caveats warnings={ws} checks={[]} />);
+    // 4 rows share origin+code but split 2/2 by severity: nothing folds
+    expect(screen.queryByText(/4× optional unmapped/)).toBeNull();
+    const texts = [...document.querySelectorAll(".caveat-row .text")].map(
+      (n) => n.textContent,
+    );
+    expect(texts).toEqual(["warn 1", "warn 2", "note 1", "note 2"]);
+  });
+
+  it("folds repeated notes into their own disclosure, labeled as notes", () => {
+    const ws = [
+      warning({ message: "the lone warning" }),
+      ...[1, 2, 3, 4].map((y) =>
+        warning({
+          severity: "info",
+          fiscal_year: 2020 + y,
+          message: `FY${2020 + y}: informational`,
+        }),
+      ),
+    ];
+    render(<Caveats warnings={ws} checks={[]} />);
+    expect(screen.getByText(/Caveats — 1 · 4 notes/)).toBeTruthy();
+    expect(screen.getByText(/4× optional unmapped \(notes\)/)).toBeTruthy();
+    expect(screen.getByText("the lone warning")).toBeTruthy();
+  });
+
   it("flips to a loud failed state when a check fails", () => {
     render(
       <Caveats
