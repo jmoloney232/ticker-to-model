@@ -32,6 +32,7 @@ from market.models import MarketInputs
 
 from .assumptions import derive_assumptions
 from .dcf import _resolve_roic, _stub, build_bridge, terminal_gordon, ufcf_schedule
+from .errors import InvalidAssumptionError
 from .models import Assumptions
 from .projections import project
 from .wacc import build_wacc
@@ -197,7 +198,7 @@ def value_curve(history: FinancialHistory, market: MarketInputs,
         _apply(candidate, field, x, da1_ratio)
         try:
             v = _gordon_per_share(history, candidate, wacc, stub)
-        except (ValueError, ZeroDivisionError):
+        except (ValueError, ZeroDivisionError, InvalidAssumptionError):
             v = None                       # honest gap, not an interpolation
         points.append((x, v))
     return {"field": field, "domain": (lo, hi), "points": points}

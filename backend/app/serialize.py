@@ -19,9 +19,54 @@ from engine.models import Bridge, ModelResult, TerminalLeg
 from engine.presets import Preset, encode_assumption_set
 from engine.reverse import ImpliedResult
 
+# Plain label first, technical term second (owner spec, redesign 2026-08-15).
+# The target reader knows the concepts; the conventions live behind them.
+PLAIN_LABELS = {
+    "revenue_growth_fy1": "Revenue growth, year 1",
+    "revenue_cagr_uncapped": "Revenue CAGR, uncapped (context)",
+    "cogs_pct": "Cost of revenue (% of revenue)",
+    "rnd_pct": "R&D (% of revenue)",
+    "sga_pct": "SG&A (% of revenue)",
+    "other_opex_pct": "Other operating costs (% of revenue)",
+    "unclassified_costs_pct": "Unclassified costs (% of revenue)",
+    "sbc_pct": "Stock compensation (% of revenue)",
+    "sbc_addback": "Add back stock comp (street FCF)",
+    "dso": "Receivable days (DSO)",
+    "dio": "Inventory days (DIO)",
+    "dpo": "Payable days (DPO)",
+    "oca_pct": "Other current assets (% of revenue)",
+    "accrued_pct": "Accrued liabilities (% of revenue)",
+    "ocl_pct": "Other current liabilities (% of revenue)",
+    "defrev_pct": "Deferred revenue (% of revenue)",
+    "da_pct_beginning_ppe": "Depreciation (% of opening PP&E)",
+    "da_pct_revenue": "Depreciation (% of revenue)",
+    "capex_pct": "Capex (% of revenue)",
+    "effective_tax_fy1": "Cash tax rate, year 1",
+    "marginal_tax": "Marginal tax rate (terminal)",
+    "risk_free": "Risk-free rate (10Y)",
+    "erp": "Equity risk premium (ERP)",
+    "beta": "Beta (2y weekly, adjusted)",
+    "beta_raw": "Beta, raw regression (context)",
+    "beta_adjusted": "Blume-adjust beta",
+    "embedded_debt_rate": "Embedded debt rate (interest ÷ debt)",
+    "interest_income_yield": "Interest income yield",
+    "coverage_ratio": "Interest coverage (EBIT ÷ interest)",
+    "kd_synthetic": "Synthetic cost of debt (rating-based)",
+    "terminal_growth": "Long-run growth (terminal g)",
+    "terminal_growth_rf_ceiling": "10Y ceiling for long-run growth",
+    "terminal_roic": "Terminal return on capital (ROIC)",
+    "terminal_roic_fade": "Fade terminal ROIC toward WACC",
+    "exit_multiple": "Exit multiple (EV/EBITDA)",
+    "forecast_years": "Forecast horizon",
+    "midyear": "Mid-year discounting",
+    "payout_ratio": "Dividend payout ratio",
+    "share_count": "Share count (diluted)",
+    "cash_floor_pct": "Operating cash floor (% of revenue)",
+}
+
 
 def _label(name: str) -> str:
-    return name.replace("_", " ").capitalize()
+    return PLAIN_LABELS.get(name, name.replace("_", " ").capitalize())
 
 
 # ── the verdict sentence (owner spec, 2026-08-15) ───────────────────────────
@@ -260,6 +305,52 @@ def curves_out(m: ModelResult, reverse_dict: dict | None) -> dict:
     }}
 
 
+# direction cues for the headline drivers — why the arrow points that way
+_DRIVER_NOTES = {
+    "wacc": "set by beta, ERP and the 10Y · future cash is worth less today",
+    "terminal_growth": "compounds forever in the terminal value",
+    "revenue_growth_fy1": "sets the base every later year compounds from",
+    "cogs_pct": "every point of margin flows to free cash flow",
+    "rnd_pct": "every point of margin flows to free cash flow",
+    "sga_pct": "every point of margin flows to free cash flow",
+    "other_opex_pct": "every point of margin flows to free cash flow",
+    "unclassified_costs_pct": "every point of margin flows to free cash flow",
+    "sbc_pct": "expensed in FCF here — no add-back by default",
+    "effective_tax_fy1": "taken straight out of every year's cash flow",
+    "marginal_tax": "taxes the terminal year, where most value sits",
+    "capex_pct": "cash out the door before free cash flow",
+    "terminal_roic": "sets what perpetual growth costs in reinvestment",
+    "exit_multiple": "prices the terminal year the way the market prices today",
+    "dso": "working capital tied up as the business grows",
+    "dio": "working capital tied up as the business grows",
+    "dpo": "supplier financing released as the business grows",
+}
+_STEP_LABELS = {"rate": "±1pp", "ratio": "±1pp", "x": "±0.5×",
+                "days": "±5 days", "wacc": "±1pp"}
+
+
+def drivers_out(m: ModelResult) -> list[dict]:
+    """Top-5 headline drivers, ranked by engine-computed impact on the
+    headline leg (methodology: driver_ranking). Empty when no leg values."""
+    from engine.drivers import driver_impacts
+    leg = ("gordon" if "gordon" in m.bridges
+           else "exit_multiple" if "exit_multiple" in m.bridges else None)
+    if leg is None:
+        return []
+    return [{
+        "name": d.name,
+        "label": ("Discount rate (WACC)" if d.name == "wacc"
+                  else _label(d.name)),
+        "direction": "up" if d.direction > 0 else "down",
+        "step_label": _STEP_LABELS[d.unit],
+        "impact_per_share": d.impact_per_share,
+        "note": _DRIVER_NOTES.get(d.name, ""),
+        "composite": d.composite,
+        "leg": leg,
+    } for d in driver_impacts(m.history, m.market, m.assumptions,
+                              m.valuation_date, leg)]
+
+
 def _reverse_out(reverse: dict[str, ImpliedResult] | None) -> dict | None:
     if reverse is None:
         return None
@@ -330,6 +421,7 @@ def serialize_model(m: ModelResult, preset: Preset | None,
                                 m.assumptions.eff("terminal_growth"),
                                 price, gordon, exit_mult, reverse_dict),
         "curves": curves_out(m, reverse_dict),
+        "drivers": drivers_out(m),
         "valuation": {
             "gordon": gordon,
             "exit_multiple": exit_mult,

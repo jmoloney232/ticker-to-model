@@ -489,3 +489,47 @@ conventions:
       signals distrust. The gate refuses captive-finance balance sheets (Deere: 20%
       mapped) rather than valuing a fifth of a company, while bounded gaps (NVIDIA:
       73%, dominated by a disclosed combined-investments line) build with a warning.
+
+  - id: driver_ranking
+    label: Headline-driver ranking
+    category: mechanics
+    default: "The Summary tab's five headline drivers are ranked by actual impact for the company at hand: mean absolute per-share move of the headline valuation leg under a standardized ± step of each editable assumption"
+    steps: {rate: 0.01, ratio: 0.01, x: 0.5, days: 5.0}
+    wacc_step: 0.01
+    top_n: 5
+    derivation: >
+      Uniform steps by unit — ±1pp for rates and ratios, ±0.5× for multiples,
+      ±5 days for working-capital days — each side engine-recomputed, averaged,
+      clamped to the valid domain (one-sided at an edge). WACC appears as one
+      composite driver swept directly (the concept the reader prices in); its
+      inputs — beta, ERP, the risk-free rate, cost-of-debt inputs — are not
+      listed separately, so one concept is never double-counted.
+    editable: false
+    tradeoff: >
+      Uniform steps are transparent and comparable but treat a 1pp margin move
+      and a 1pp revenue-growth move as equally likely, which they are not.
+      The alternative — steps scaled to each company's own historical
+      volatility — ranks "realistically" but is opaque and unstable across
+      refreshes. Transparency wins (owner decision 2026-08-15); the step is
+      printed beside every driver so nothing is implied.
+
+  - id: value_curves
+    label: Slider value curves
+    category: mechanics
+    default: "A slider on the dashboard reads a precomputed curve of at least 25 engine-computed (assumption value, per-share value) points spanning the valid domain, holding every other current assumption fixed"
+    curve_points: 25
+    derivation: >
+      The browser performs no valuation math — during a drag the slider snaps
+      to engine-computed points (landmarks such as the derived default, the
+      market-implied value, and the risk-free rate are inserted as exact
+      points), and the authoritative full recompute fires on release. A CI
+      test asserts sampled curve points equal a full model rebuild at that
+      value. The terminal-growth track is draggable to WACC − 25bp (the
+      engine's hard block); crossing the 10Y is warned, not blocked, matching
+      the published g ≤ rf rule.
+    editable: false
+    tradeoff: >
+      Precomputing on the server costs one curve per response (~25 cheap
+      Gordon-leg evaluations) and guarantees the browser can never disagree
+      with the engine; client-side interpolation would be faster still but
+      would put valuation math in the frontend, which this project forbids.
