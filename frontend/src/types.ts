@@ -35,21 +35,53 @@ export interface BridgeItem {
   note: string | null;
 }
 
-export type Leg =
+/* One entry of the server's valuation-methods registry. The list is ordered
+   by the server; ids are stable (gordon | exit_multiple | epv | ...). The UI
+   iterates and renders this shape only — adding a method server-side needs
+   no rendering changes here. */
+export interface MethodDetail {
+  key: string;
+  label: string;
+  unit: string;
+  value: number;
+}
+
+export type MethodOut = { id: string; label: string; note: string } & (
   | {
       available: true;
       value_per_share: number;
       vs_price: number;
       enterprise_value: number;
       equity_value: number;
-      tv_at_fyeN: number;
-      tv_pv: number;
-      tv_exponent: number;
-      tv_share_of_ev: number | null;
-      tv_detail: Record<string, unknown>;
+      detail: MethodDetail[];
       bridge: BridgeItem[];
     }
-  | { available: false; reason: Reason };
+  | { available: false; reason: Reason }
+);
+
+export function findMethod(
+  valuation: MethodOut[],
+  id: string,
+): MethodOut | undefined {
+  return valuation.find((mo) => mo.id === id);
+}
+
+export function methodDetail(
+  mo: MethodOut | undefined,
+  key: string,
+): number | null {
+  if (!mo || !mo.available) return null;
+  return mo.detail.find((d) => d.key === key)?.value ?? null;
+}
+
+export interface GrowthOut {
+  available: boolean;
+  state: string; // positive | value_destructive | unavailable
+  text: string; // server-written sentence — never composed client-side
+  per_share?: number | null;
+  share_of_dcf?: number | null;
+  reason?: Reason;
+}
 
 export interface Grid {
   row_label: string;
@@ -191,7 +223,8 @@ export interface ModelOk {
   verdict: Verdict;
   curves: Record<string, Curve>;
   drivers: Driver[];
-  valuation: { gordon: Leg; exit_multiple: Leg };
+  valuation: MethodOut[];
+  growth: GrowthOut;
   wacc: Record<string, unknown>;
   ufcf: Record<string, number>[];
   projections: ProjectionRow[];

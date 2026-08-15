@@ -13,7 +13,11 @@ afterEach(cleanup);
 describe("hero legs", () => {
   it("renders an unavailable leg as a reasoned plate, never an error", () => {
     const m = modelOk();
-    m.valuation.exit_multiple = {
+    const i = m.valuation.findIndex((mo) => mo.id === "exit_multiple");
+    m.valuation[i] = {
+      id: "exit_multiple",
+      label: "DCF — exit multiple",
+      note: "",
       available: false,
       reason: {
         code: "exit_multiple_unavailable",
@@ -24,6 +28,13 @@ describe("hero legs", () => {
     render(<Hero model={m} />);
     expect(screen.getByText(/No exit multiple — FY0 EBITDA/)).toBeTruthy();
     expect(screen.getByText("280.99")).toBeTruthy();
+  });
+
+  it("renders every registry method as a bar — EPV rides along", () => {
+    render(<Hero model={modelOk()} />);
+    expect(screen.getByText("171.22")).toBeTruthy();
+    expect(screen.getByText("Earnings power (no growth)")).toBeTruthy();
+    expect(screen.getByText("−65.6%")).toBeTruthy();
   });
 
   it("shows the implied-growth gap when the solve exists", () => {

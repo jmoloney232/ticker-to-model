@@ -6,6 +6,7 @@
 import { Fragment } from "react";
 import { fmtPct, fmtPrice } from "../format";
 import type { Grid, ImpliedSolve, ModelOk } from "../types";
+import { findMethod, methodDetail } from "../types";
 
 const HEAT_BASE = 0.04; // ds: mockup heat ramp
 const HEAT_SPAN = 0.3;
@@ -129,8 +130,8 @@ export function Sensitivity({ model }: { model: ModelOk }) {
   const price = model.market.price.value;
   const g = model.sensitivity["wacc_x_g"];
   const mult = model.sensitivity["wacc_x_multiple"];
-  const gordon = model.valuation.gordon;
-  const exit = model.valuation.exit_multiple;
+  const gordon = findMethod(model.valuation, "gordon");
+  const exit = findMethod(model.valuation, "exit_multiple");
 
   const allCells = [
     ...(g ? g.cells.flat() : []),
@@ -153,7 +154,7 @@ export function Sensitivity({ model }: { model: ModelOk }) {
         ) : (
           <div className="gridoff">
             WACC × g grid unavailable —{" "}
-            {!gordon.available
+            {gordon && !gordon.available
               ? gordon.reason.message
               : "the Gordon leg is unavailable."}
           </div>
@@ -169,7 +170,7 @@ export function Sensitivity({ model }: { model: ModelOk }) {
         ) : (
           <div className="gridoff">
             WACC × multiple grid unavailable —{" "}
-            {!exit.available
+            {exit && !exit.available
               ? exit.reason.message
               : "the exit leg is unavailable."}
           </div>
@@ -189,8 +190,8 @@ export function Sensitivity({ model }: { model: ModelOk }) {
               Terminal value share of EV — perpetuity / exit
             </span>
             <span className="v">
-              {gordon.available ? fmtPct(gordon.tv_share_of_ev, 0) : "—"} /{" "}
-              {exit.available ? fmtPct(exit.tv_share_of_ev, 0) : "—"}
+              {fmtPct(methodDetail(gordon, "tv_share_of_ev"), 0)} /{" "}
+              {fmtPct(methodDetail(exit, "tv_share_of_ev"), 0)}
             </span>
           </div>
           <div className="stat">

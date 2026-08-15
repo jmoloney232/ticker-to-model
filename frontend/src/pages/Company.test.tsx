@@ -66,6 +66,17 @@ describe("Company page — Summary tab", () => {
     expect(screen.getByText(/6\.2% growth forever/)).toBeTruthy();
   });
 
+  it("prints the server's value-of-growth sentence verbatim", async () => {
+    vi.stubGlobal("fetch", stubFetch(modelOk()).fn);
+    render(<Company ticker="MSFT" />);
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Growth is worth \$310 a share here/),
+      ).toBeTruthy(),
+    );
+    expect(screen.getByText("Value of growth")).toBeTruthy();
+  });
+
   it("ranks the drivers with direction cues", async () => {
     vi.stubGlobal("fetch", stubFetch(modelOk()).fn);
     render(<Company ticker="MSFT" />);
@@ -173,7 +184,11 @@ describe("the slider", () => {
 
   it("states the reason when no curve exists instead of rendering", async () => {
     const m = modelOk({ curves: {} });
-    m.valuation.gordon = {
+    const i = m.valuation.findIndex((mo) => mo.id === "gordon");
+    m.valuation[i] = {
+      id: "gordon",
+      label: "DCF — Gordon perpetuity",
+      note: "",
       available: false,
       reason: {
         code: "terminal_anchor_negative",

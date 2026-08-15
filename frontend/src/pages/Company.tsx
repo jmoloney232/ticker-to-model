@@ -16,6 +16,7 @@ import {
   fetchPresets,
   workbookUrl,
 } from "../api";
+import { findMethod } from "../types";
 import { Assumptions } from "../components/Assumptions";
 import { AuditTab } from "../components/AuditTab";
 import { Caveats, CheckBand } from "../components/Caveats";
@@ -489,9 +490,9 @@ export function Company({ ticker }: { ticker: string }) {
     : undefined;
 
   const curve = model.curves["terminal_growth"];
-  const gordonReason = !model.valuation.gordon.available
-    ? model.valuation.gordon.reason.message
-    : null;
+  const gordonM = findMethod(model.valuation, "gordon");
+  const gordonReason =
+    gordonM && !gordonM.available ? gordonM.reason.message : null;
   const company = model.company.short_name || model.company.name;
 
   const modelDensity = (
@@ -538,6 +539,12 @@ export function Company({ ticker }: { ticker: string }) {
               <div className="kicker">Verdict</div>
               <p>{model.verdict.text}</p>
             </div>
+            {model.growth && (
+              <div className="verdict growthline">
+                <div className="kicker">Value of growth</div>
+                <p>{model.growth.text}</p>
+              </div>
+            )}
             {curve ? (
               <GrowthSlider
                 curve={curve}
