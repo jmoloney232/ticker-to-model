@@ -589,15 +589,22 @@ button {
   font: 400 10.5px/1 var(--font-body);
   color: var(--text-4-dark);
 }
+/* bars and captions are separate rows on one column grid: the market line
+   is offset from the plot's bottom edge, which IS the bars' baseline */
 .chart {
-  position: relative;
-  height: 200px;
   margin-top: 20px;
+}
+.chart .plot,
+.chart .caps {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 56px;
-  align-items: end;
   padding: 0 40px;
+}
+.chart .plot {
+  position: relative;
+  height: 152px; /* ds: mockup bar geometry — fig (26) + tallest bar (120) + 6 */
+  align-items: end;
 }
 .mkt-line {
   position: absolute;
@@ -605,12 +612,6 @@ button {
   right: 0;
   height: var(--hair);
   background: var(--steel-sky);
-}
-.mkt-tag {
-  position: absolute;
-  right: 0;
-  font: 500 10px/1 var(--font-mono);
-  color: var(--steel-sky);
 }
 .bar-fig {
   font: var(--type-kpi-sm);

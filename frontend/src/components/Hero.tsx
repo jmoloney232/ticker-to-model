@@ -14,11 +14,11 @@ function solveStatusText(status: string): string {
   return "no solution in the searched range";
 }
 
-function LegColumn({
-  leg,
-  label,
-  pxPerUnit,
-}: {
+/* Bars and captions live in separate grid rows so the market reference
+   line (positioned from the plot's bottom edge) shares the bars' exact
+   baseline — captions can never push the bars off the line's scale. */
+
+function LegBar({ leg, label, pxPerUnit }: {
   leg: Leg;
   label: string;
   pxPerUnit: number;
@@ -31,7 +31,6 @@ function LegColumn({
       </div>
     );
   }
-  const dn = leg.vs_price < 0;
   return (
     <div>
       <div className="bar-fig">{fmtPrice(leg.value_per_share)}</div>
@@ -39,13 +38,20 @@ function LegColumn({
         className="bar"
         style={{ height: Math.max(4, leg.value_per_share * pxPerUnit) }}
       />
-      <div className="bar-cap">
-        {label}
-        <br />
-        <span className={`delta ${dn ? "dn" : "up"}`}>
-          {fmtSignedPct(leg.vs_price)}
-        </span>
-      </div>
+    </div>
+  );
+}
+
+function LegCap({ leg, label }: { leg: Leg; label: string }) {
+  if (!leg.available) return <div />;
+  const dn = leg.vs_price < 0;
+  return (
+    <div className="bar-cap">
+      {label}
+      <br />
+      <span className={`delta ${dn ? "dn" : "up"}`}>
+        {fmtSignedPct(leg.vs_price)}
+      </span>
     </div>
   );
 }
@@ -140,29 +146,39 @@ export function Hero({ model }: { model: ModelOk }) {
           </span>
         </div>
         <div className="chart">
-          <div className="mkt-line" style={{ bottom: mktPx }} />
-          <div className="mkt-tag" style={{ bottom: mktPx + 4 }}>
-            market {fmtPrice(price)}
+          <div className="plot">
+            <div className="mkt-line" style={{ bottom: mktPx }} />
+            <LegBar leg={gordon} label="perpetuity growth" pxPerUnit={pxPerUnit} />
+            <div>
+              <div className="bar-fig mkt">{fmtPrice(price)}</div>
+              <div className="bar mkt" style={{ height: mktPx }} />
+            </div>
+            <LegBar
+              leg={exit}
+              label={
+                exitMult != null
+                  ? `${exitMult.toFixed(1)}× exit multiple`
+                  : "exit multiple"
+              }
+              pxPerUnit={pxPerUnit}
+            />
           </div>
-          <LegColumn leg={gordon} label="perpetuity growth" pxPerUnit={pxPerUnit} />
-          <div>
-            <div className="bar-fig mkt">{fmtPrice(price)}</div>
-            <div className="bar mkt" style={{ height: mktPx }} />
+          <div className="caps">
+            <LegCap leg={gordon} label="perpetuity growth" />
             <div className="bar-cap">
               market price
               <br />
               <span className="delta">reference</span>
             </div>
+            <LegCap
+              leg={exit}
+              label={
+                exitMult != null
+                  ? `${exitMult.toFixed(1)}× exit multiple`
+                  : "exit multiple"
+              }
+            />
           </div>
-          <LegColumn
-            leg={exit}
-            label={
-              exitMult != null
-                ? `${exitMult.toFixed(1)}× exit multiple`
-                : "exit multiple"
-            }
-            pxPerUnit={pxPerUnit}
-          />
         </div>
         {sentence && <div className="straddle-sentence">{sentence}</div>}
       </div>
