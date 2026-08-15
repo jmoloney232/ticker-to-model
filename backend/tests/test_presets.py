@@ -335,13 +335,21 @@ class TestEncoding:
     def test_roundtrip(self):
         code = encode_assumption_set("downside", {"terminal_growth": 0.02,
                                                   "midyear": False})
-        preset, overrides = decode_assumption_set(code)
+        preset, overrides, profile = decode_assumption_set(code)
         assert preset == "downside"
         assert overrides == {"terminal_growth": 0.02, "midyear": False}
+        assert profile is None                # auto never encodes
 
     def test_roundtrip_empty(self):
-        preset, overrides = decode_assumption_set(encode_assumption_set(None, None))
-        assert preset is None and overrides == {}
+        preset, overrides, profile = decode_assumption_set(
+            encode_assumption_set(None, None))
+        assert preset is None and overrides == {} and profile is None
+
+    def test_roundtrip_profile_reassignment(self):
+        code = encode_assumption_set(None, None, "mature")
+        assert decode_assumption_set(code) == (None, {}, "mature")
+        with pytest.raises(ValueError):
+            decode_assumption_set(encode_assumption_set(None, None, "turbo"))
 
     def test_compact_and_urlsafe(self):
         code = encode_assumption_set("street_convention", {"beta": 1.2})

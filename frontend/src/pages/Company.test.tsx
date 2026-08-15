@@ -114,6 +114,25 @@ describe("tabs — in place, no navigation", () => {
   });
 });
 
+describe("company profile", () => {
+  it("discloses the profile with its measurements and posts a reassignment", async () => {
+    const stub = stubFetch(modelOk());
+    vi.stubGlobal("fetch", stub.fn);
+    render(<Company ticker="MSFT" />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: /model/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole("tab", { name: /model/i }));
+    expect(screen.getByText("compounder + reinvestment heavy")).toBeTruthy();
+    expect(screen.getByText(/revenue CAGR 13\.7%/)).toBeTruthy();
+    // reassign primary to mature — modifiers survive; posts the tag
+    fireEvent.click(screen.getByRole("button", { name: "mature" }));
+    await waitFor(() => {
+      const posts = stub.calls.filter((c) => c.url.includes("/api/model/"));
+      const last = posts[posts.length - 1].body as { profile?: string };
+      expect(last.profile).toBe("mature+reinvestment_heavy");
+    });
+  });
+});
+
 describe("detail toggle", () => {
   it("restores full density on Summary in one click", async () => {
     vi.stubGlobal("fetch", stubFetch(modelOk()).fn);

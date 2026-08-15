@@ -385,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
                      os.environ.get("ALPACA_API_SECRET_KEY", "")),
         FredClient(os.environ.get("FRED_API_KEY", "")),
         cache=cache)
-    code_preset, code_overrides = (decode_assumption_set(args.set_code)
+    code_preset, code_overrides, _code_profile = (decode_assumption_set(args.set_code)
                                    if args.set_code else (None, {}))
     overrides = {**code_overrides, **dict(parse_override(s) for s in args.set)}
     preset_name = args.preset or code_preset

@@ -466,6 +466,65 @@ button {
   color: var(--text-3);
 }
 
+/* ── company profile band (Model tab) ─────────────────────────────────── */
+
+.profile-band {
+  padding: 9px 16px 11px;
+  border-bottom: var(--hair) solid var(--line-mid);
+  background: var(--tint-band);
+}
+.profile-id {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.profile-tag {
+  font: 600 12.5px/1.3 var(--font-body);
+}
+.profile-reassigned {
+  font: 500 9px/1.8 var(--font-mono);
+  color: var(--steel-deep);
+  background: var(--tint-selected);
+  padding: 0 5px;
+}
+.profile-meta {
+  margin-top: 2px;
+  font: var(--type-body-sm);
+  color: var(--text-3);
+}
+.profile-meta .profile-note {
+  display: block;
+  color: var(--warn);
+}
+.profile-controls {
+  margin-top: 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pseg {
+  font: 500 10px/1.6 var(--font-mono);
+  padding: 1px 8px;
+  border: var(--hair) solid var(--line-soft);
+  color: var(--text-3);
+}
+.pseg.on {
+  border-color: var(--steel-deep);
+  color: var(--steel-deep);
+  background: var(--tint-selected);
+}
+.pseg.reset {
+  border: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  color: var(--steel-deep);
+}
+.psep {
+  width: var(--hair);
+  height: 14px;
+  background: var(--line-mid);
+}
+
 /* ── preset band (Model tab) ──────────────────────────────────────────── */
 
 .preset-band {

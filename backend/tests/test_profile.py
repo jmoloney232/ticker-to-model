@@ -225,3 +225,32 @@ def test_toy_flat_revenues_classify_declining():
     a = derive_assumptions(toy_history(), toy_market())
     assert a.profile.primary == "declining"
     assert a.eff("terminal_growth") == pytest.approx(0.0)   # clamp(0% CAGR)
+
+
+class TestProfileApi:
+    def test_reassignment_via_api_is_disclosed(self):
+        from fastapi.testclient import TestClient
+
+        from app import create_app
+        client = TestClient(create_app(edgar_for=edgar_for,
+                                       provider_for=provider_for))
+        auto = client.post("/api/model/MSFT", json={}).json()
+        assert auto["profile"]["tag"] == "compounder+reinvestment_heavy"
+        assert auto["profile"]["reassigned"] is False
+        assert auto["profile"]["measures"]["cagr"] > 0.08
+
+        re = client.post("/api/model/MSFT",
+                         json={"profile": "mature"}).json()
+        assert re["profile"]["tag"] == "mature"
+        assert re["profile"]["reassigned"] is True
+        rows = {a["name"]: a for a in re["assumptions"]}
+        assert rows["forecast_years"]["value"] == 5
+        # reassignment travels in the share code and reproduces the screen
+        code = re["code"]
+        via = client.get(f"/api/model/MSFT?code={code}").json()
+        assert via["profile"]["tag"] == "mature"
+        assert (via["valuation"]["gordon"]["value_per_share"]
+                == re["valuation"]["gordon"]["value_per_share"])
+
+        assert client.post("/api/model/MSFT",
+                           json={"profile": "turbo"}).status_code == 400

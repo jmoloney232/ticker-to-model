@@ -80,6 +80,26 @@ export interface Quote {
   staleness: string;
 }
 
+export interface ProfileInfo {
+  tag: string; // "compounder+reinvestment_heavy"
+  primary: "compounder" | "mature" | "declining";
+  modifiers: string[];
+  reassigned: boolean;
+  notes: string[];
+  measures: {
+    cagr: number;
+    g_latest: number;
+    roic_median: number | null;
+    roic_years_above_wacc: number;
+    roic_years: number;
+    wacc: number;
+    margin_range: number;
+    rev_down_years: number;
+    capex_da: number | null;
+    window: number;
+  };
+}
+
 export interface Verdict {
   text: string;
   state: string; // "ok" | "negative_equity" | "no_gordon" | "no_legs"
@@ -165,6 +185,7 @@ export interface ModelOk {
     beta: Record<string, unknown> | null;
   };
   preset: { name: string; title: string; rationale: string } | null;
+  profile: ProfileInfo | null;
   assumptions: AssumptionRow[];
   provenance_counts: { derived: number; preset: number; user: number };
   verdict: Verdict;

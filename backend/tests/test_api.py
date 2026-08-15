@@ -178,7 +178,8 @@ class TestLayering:
         code = r.json()["code"]
         decoded = client.get(f"/api/code/{code}").json()
         assert decoded == {"preset": "street_convention",
-                           "overrides": {"terminal_growth": 0.03}}
+                           "overrides": {"terminal_growth": 0.03},
+                           "profile": None}
         explicit = client.post("/api/model/MSFT", json={
             "valuation_date": VD, "preset": "street_convention",
             "overrides": {"terminal_growth": 0.03}}).json()

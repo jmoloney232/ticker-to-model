@@ -66,6 +66,25 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
       beta: null,
     },
     preset: null,
+    profile: {
+      tag: "compounder+reinvestment_heavy",
+      primary: "compounder",
+      modifiers: ["reinvestment_heavy"],
+      reassigned: false,
+      notes: [],
+      measures: {
+        cagr: 0.137,
+        g_latest: 0.178,
+        roic_median: 0.488,
+        roic_years_above_wacc: 4,
+        roic_years: 4,
+        wacc: 0.0998,
+        margin_range: 0.05,
+        rev_down_years: 0,
+        capex_da: 2.5,
+        window: 5,
+      },
+    },
     verdict: {
       text:
         "At 2.5% long-run growth, Microsoft is worth $281 a share — 44% " +

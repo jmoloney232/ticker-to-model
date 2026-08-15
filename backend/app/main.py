@@ -32,6 +32,7 @@ from engine.presets import (
     encode_assumption_set,
     load_presets,
 )
+from engine.profile import parse_profile
 from ingest.errors import EdgarUnavailableError, UnknownTickerError
 from market.errors import MarketDataError
 from market.provider import market_today
@@ -43,6 +44,7 @@ from .state import REFUSAL_ERRORS, CompanyStore
 class ModelRequest(BaseModel):
     preset: str | None = None
     overrides: dict[str, float | bool] | None = None
+    profile: str | None = None               # reassignment tag; None = auto
     code: str | None = None                  # compact assumption-set code
     valuation_date: date | None = None
 
@@ -50,6 +52,7 @@ class ModelRequest(BaseModel):
 class CodeRequest(BaseModel):
     preset: str | None = None
     overrides: dict[str, float | bool] | None = None
+    profile: str | None = None
 
 
 def _prod_dependencies():
@@ -90,23 +93,32 @@ def create_app(edgar_for=None, provider_for=None,
 
     # ── shared assembly ─────────────────────────────────────────────────────
 
-    def _resolve_inputs(body: ModelRequest) -> tuple[str | None, dict, date]:
-        """code + explicit fields → (preset_name, overrides, vd); explicit
-        wins over the code on conflict (same rule as the CLI)."""
-        code_preset, code_overrides = (None, {})
+    def _resolve_inputs(body: ModelRequest
+                        ) -> tuple[str | None, dict, str | None, date]:
+        """code + explicit fields → (preset_name, overrides, profile, vd);
+        explicit wins over the code on conflict (same rule as the CLI)."""
+        code_preset, code_overrides, code_profile = (None, {}, None)
         if body.code:
             try:
-                code_preset, code_overrides = decode_assumption_set(body.code)
+                code_preset, code_overrides, code_profile = \
+                    decode_assumption_set(body.code)
             except ValueError as exc:
                 raise HTTPException(400, detail=str(exc)) from exc
         preset_name = body.preset or code_preset
+        profile = body.profile or code_profile
+        if profile is not None:
+            try:
+                parse_profile(profile)
+            except ValueError as exc:
+                raise HTTPException(400, detail=str(exc)) from exc
         overrides = {**code_overrides, **(body.overrides or {})}
-        return preset_name, overrides, body.valuation_date or market_today()
+        return (preset_name, overrides, profile,
+                body.valuation_date or market_today())
 
     def _build(ticker: str, body: ModelRequest):
         """Returns (payload dict) — refusals included — or raises HTTP errors
         for actual failures."""
-        preset_name, overrides, vd = _resolve_inputs(body)
+        preset_name, overrides, profile, vd = _resolve_inputs(body)
         preset = None
         if preset_name:
             if preset_name not in app.state.presets:
@@ -129,11 +141,13 @@ def create_app(edgar_for=None, provider_for=None,
             assumptions = None
             if preset is not None:
                 assumptions = apply_preset(
-                    derive_assumptions(history, market), preset, history,
-                    market, vd)
+                    derive_assumptions(history, market,
+                                       profile=profile or "auto"),
+                    preset, history, market, vd)
             model = build_model(history, market, valuation_date=vd,
                                 overrides=overrides or None,
-                                assumptions=assumptions)
+                                assumptions=assumptions,
+                                profile=profile or "auto")
         except PresetUnavailableError as exc:
             return {"status": "preset_unavailable",
                     "reason": {"code": "preset_unavailable",
@@ -142,7 +156,8 @@ def create_app(edgar_for=None, provider_for=None,
         except InvalidAssumptionError as exc:
             raise HTTPException(400, detail=exc.user_message) from exc
         reverse = app.state.store.reverse(ticker, vd)
-        return serialize_model(model, preset, overrides, reverse), model
+        return serialize_model(model, preset, overrides, reverse,
+                               profile=profile), model
 
     # ── endpoints ───────────────────────────────────────────────────────────
 
@@ -185,10 +200,11 @@ def create_app(edgar_for=None, provider_for=None,
 
     @app.get("/api/model/{ticker}")
     def model_get(ticker: str, code: str | None = None,
-                  preset: str | None = None,
+                  preset: str | None = None, profile: str | None = None,
                   valuation_date: date | None = None):
         payload, _ = _build(ticker, ModelRequest(
-            preset=preset, code=code, valuation_date=valuation_date))
+            preset=preset, code=code, profile=profile,
+            valuation_date=valuation_date))
         return payload
 
     @app.get("/api/reverse/{ticker}")
@@ -212,13 +228,14 @@ def create_app(edgar_for=None, provider_for=None,
 
     @app.get("/api/workbook/{ticker}.xlsx")
     def workbook(ticker: str, code: str | None = None,
-                 preset: str | None = None,
+                 preset: str | None = None, profile: str | None = None,
                  valuation_date: date | None = None):
         """Same layering as /api/model — what you download equals what you
         see, because both come from the same ModelResult."""
         from excel import write_workbook
         payload, model = _build(ticker, ModelRequest(
-            preset=preset, code=code, valuation_date=valuation_date))
+            preset=preset, code=code, profile=profile,
+            valuation_date=valuation_date))
         if model is None:                      # refusal → no workbook to give
             raise HTTPException(
                 409, detail=payload["reason"]["message"])
@@ -238,15 +255,16 @@ def create_app(edgar_for=None, provider_for=None,
     @app.post("/api/code")
     def code_encode(body: CodeRequest):
         return {"code": encode_assumption_set(body.preset,
-                                              body.overrides or None)}
+                                              body.overrides or None,
+                                              body.profile)}
 
     @app.get("/api/code/{code}")
     def code_decode(code: str):
         try:
-            preset, overrides = decode_assumption_set(code)
+            preset, overrides, profile = decode_assumption_set(code)
         except ValueError as exc:
             raise HTTPException(400, detail=str(exc)) from exc
-        return {"preset": preset, "overrides": overrides}
+        return {"preset": preset, "overrides": overrides, "profile": profile}
 
     async def refusal_handler(_request: Request, exc):
         # belt-and-braces: a refusal raised outside the store still returns

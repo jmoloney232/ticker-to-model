@@ -275,20 +275,26 @@ def apply_preset(assumptions: Assumptions, preset: Preset,
 # ── compact encoding (shareable assumption sets — no persistence layer) ──────
 
 def encode_assumption_set(preset: str | None,
-                          overrides: dict[str, float | bool] | None) -> str:
-    """Compact url-safe encoding of (preset name, user overrides). Derived
-    values are NOT encoded — they recompute from the filer's history, so a
-    code stays honest as filings update."""
+                          overrides: dict[str, float | bool] | None,
+                          profile: str | None = None) -> str:
+    """Compact url-safe encoding of (preset name, user overrides, profile
+    reassignment). Derived values are NOT encoded — they recompute from the
+    filer's history, so a code stays honest as filings update. profile is
+    encoded only when the user reassigned it (auto never encodes, so codes
+    follow reclassifications as new filings land)."""
     payload: dict = {"v": 1}
     if preset:
         payload["p"] = preset
     if overrides:
         payload["o"] = overrides
+    if profile:
+        payload["pf"] = profile
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     return base64.urlsafe_b64encode(zlib.compress(raw, 9)).decode().rstrip("=")
 
 
-def decode_assumption_set(code: str) -> tuple[str | None, dict[str, float | bool]]:
+def decode_assumption_set(
+        code: str) -> tuple[str | None, dict[str, float | bool], str | None]:
     try:
         raw = zlib.decompress(
             base64.urlsafe_b64decode(code + "=" * (-len(code) % 4)))
@@ -306,4 +312,11 @@ def decode_assumption_set(code: str) -> tuple[str | None, dict[str, float | bool
             for k, v in overrides.items()):
         raise ValueError("invalid assumption-set code: overrides must map "
                          "field names to numbers or booleans")
-    return preset, overrides
+    profile = doc.get("pf")
+    if profile is not None:
+        if not isinstance(profile, str):
+            raise ValueError("invalid assumption-set code: profile must be "
+                             "a tag")
+        from .profile import parse_profile
+        parse_profile(profile)            # raises ValueError on unknown tags
+    return preset, overrides, profile

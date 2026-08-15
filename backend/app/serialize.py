@@ -221,7 +221,9 @@ def provenance_counts(m: ModelResult) -> dict[str, int]:
     counts = {"derived": 0, "preset": 0, "user": 0}
     for f in m.assumptions.fields.values():
         p = f.provenance
-        counts["preset" if p.startswith("preset") else p] += 1
+        key = ("preset" if p.startswith("preset")
+               else "derived" if p.startswith("derived") else p)
+        counts[key] += 1
     return counts
 
 
@@ -478,9 +480,35 @@ def _history_out(m: ModelResult) -> list[dict]:
     return out
 
 
+def profile_out(m: ModelResult) -> dict | None:
+    """The company profile with its measured trigger values — disclosed,
+    never silent (owner spec). None when the profile layer was skipped."""
+    prof = getattr(m.assumptions, "profile", None)
+    if prof is None:
+        return None
+    mm = prof.measures
+    return {
+        "tag": prof.tag,
+        "primary": prof.primary,
+        "modifiers": list(prof.modifiers),
+        "reassigned": prof.reassigned,
+        "notes": list(prof.notes),
+        "measures": {
+            "cagr": mm.cagr, "g_latest": mm.g_latest,
+            "roic_median": mm.roic_median,
+            "roic_years_above_wacc": mm.roic_years_above_wacc,
+            "roic_years": mm.roic_years, "wacc": mm.wacc,
+            "margin_range": mm.margin_range,
+            "rev_down_years": mm.rev_down_years,
+            "capex_da": mm.capex_da, "window": mm.window,
+        },
+    }
+
+
 def serialize_model(m: ModelResult, preset: Preset | None,
                     overrides: dict | None,
-                    reverse: dict[str, ImpliedResult] | None) -> dict:
+                    reverse: dict[str, ImpliedResult] | None,
+                    profile: str | None = None) -> dict:
     price = m.market.price.value
     h = m.history
     cov = h.coverage
@@ -493,7 +521,8 @@ def serialize_model(m: ModelResult, preset: Preset | None,
         "ticker": m.ticker,
         "valuation_date": m.valuation_date.isoformat(),
         "code": encode_assumption_set(
-            preset.name if preset else None, overrides or None),
+            preset.name if preset else None, overrides or None, profile),
+        "profile": profile_out(m),
         "company": {
             "name": h.company.name,
             "short_name": short_name(h.company.name),

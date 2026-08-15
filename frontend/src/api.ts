@@ -30,6 +30,7 @@ async function handle<T>(res: Response): Promise<T> {
 export interface ModelRequest {
   preset?: string | null;
   overrides?: Record<string, number | boolean>;
+  profile?: string | null; // reassignment tag; null/absent = auto-classified
   code?: string | null;
 }
 
@@ -64,11 +65,17 @@ export function fetchAuditGuide(): Promise<{ markdown: string }> {
   );
 }
 
-export function decodeCode(
-  code: string,
-): Promise<{ preset: string | null; overrides: Record<string, number | boolean> }> {
+export function decodeCode(code: string): Promise<{
+  preset: string | null;
+  overrides: Record<string, number | boolean>;
+  profile: string | null;
+}> {
   return fetch(`${BASE}/api/code/${encodeURIComponent(code)}`).then((r) =>
-    handle<{ preset: string | null; overrides: Record<string, number | boolean> }>(r),
+    handle<{
+      preset: string | null;
+      overrides: Record<string, number | boolean>;
+      profile: string | null;
+    }>(r),
   );
 }
 

@@ -22,6 +22,7 @@ import { Caveats, CheckBand } from "../components/Caveats";
 import { Drivers } from "../components/Drivers";
 import { GrowthSlider } from "../components/GrowthSlider";
 import { Hero } from "../components/Hero";
+import { ProfileBand } from "../components/ProfileBand";
 import { Sensitivity } from "../components/Sensitivity";
 import { reasonDetail, StateCard } from "../components/StateCard";
 import { ProjectionsTable } from "../components/Statements";
@@ -233,6 +234,7 @@ function Actions({ ticker, model }: { ticker: string; model: ModelOk }) {
 export function Company({ ticker }: { ticker: string }) {
   const [seeded, setSeeded] = useState(false);
   const [preset, setPreset] = useState<string | null>(null);
+  const [profileTag, setProfileTag] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Overrides>({});
   const [model, setModel] = useState<ModelOk | null>(null);
   const [blocked, setBlocked] = useState<ModelBlocked | null>(null);
@@ -271,6 +273,7 @@ export function Company({ ticker }: { ticker: string }) {
     setBlocked(null);
     setFailed(null);
     setPreset(null);
+    setProfileTag(null);
     setOverrides({});
     firstLoad.current = true;
     const code = new URLSearchParams(window.location.search).get("c");
@@ -283,6 +286,7 @@ export function Company({ ticker }: { ticker: string }) {
       .then((d) => {
         if (!alive) return;
         setPreset(d.preset);
+        setProfileTag(d.profile ?? null);
         setOverrides(d.overrides ?? {});
         setSeeded(true);
       })
@@ -303,7 +307,8 @@ export function Company({ ticker }: { ticker: string }) {
     const ctrl = new AbortController();
     const run = () => {
       setBusy(true);
-      fetchModel(ticker, { preset, overrides }, ctrl.signal)
+      fetchModel(ticker, { preset, overrides, profile: profileTag },
+                 ctrl.signal)
         .then((resp) => {
           setBusy(false);
           if (resp.status === "ok") {
@@ -312,7 +317,8 @@ export function Company({ ticker }: { ticker: string }) {
             setFailed(null);
             setOverrideError(null);
             lastGood.current = { preset, overrides };
-            const hasSet = preset != null || Object.keys(overrides).length > 0;
+            const hasSet = preset != null || profileTag != null ||
+              Object.keys(overrides).length > 0;
             setUrlParam("c", hasSet && resp.code ? resp.code : null);
           } else {
             setBlocked(resp);
@@ -343,7 +349,7 @@ export function Company({ ticker }: { ticker: string }) {
       window.clearTimeout(id);
       ctrl.abort();
     };
-  }, [ticker, seeded, preset, overrides, retryTick]);
+  }, [ticker, seeded, preset, profileTag, overrides, retryTick]);
 
   const onOverride = useCallback(
     (name: string, value: number | boolean | null) => {
@@ -586,6 +592,16 @@ export function Company({ ticker }: { ticker: string }) {
         {tab === "model" && (
           <>
             <CheckBand checks={model.checks} />
+            {model.profile && (
+              <ProfileBand
+                profile={model.profile}
+                requested={profileTag}
+                onReassign={(tag) => {
+                  setOverrideError(null);
+                  setProfileTag(tag);
+                }}
+              />
+            )}
             <PresetStrip
               presets={presets}
               model={model}
