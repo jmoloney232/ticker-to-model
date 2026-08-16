@@ -54,6 +54,30 @@ Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
 
 ## Decision log (recent additions)
 
+- **Split D&A basis (owner, 2026-08-16):** PP&E roll consumes depreciation
+  only (D&A − intangible amortization, subtraction-derived, identity floor
+  dep ≤ beg PP&E + capex); intangibles run off at their own rate, add-back
+  expires with the balance (run-off treatment chosen over no-add-back /
+  perpetual); combined basis retained + `amortization_unobservable` when the
+  filer doesn't tag the split. Fixes AVGO (−$342.69 → $91.36). Classifier
+  capex/D&A basis deliberately deferred (known-limitations §13). D + ED are
+  known_unsupported with corrected verified reasons (NOT NEE-class: D nets
+  disposals into its only capex tag; ED files PaymentsForConstructionInProcess
+  — both one-line chain adds if utilities enter scope).
+- **Half-cosine fade removed (owner-delegated, 2026-08-16):** worth ≤$2/share
+  across the whole compounder cohort — deleted, not documented; linear fade
+  only; compounder profile = exactly two levers (10y horizon, g at 10Y).
+- **Terminal spread floor (proposal only, 2026-08-16):**
+  `docs/proposals/terminal-spread-floor.md` — measured: no filer below a 2.5%
+  spread (g ≤ rf + one-WACC bounds spread ≥ ~wE·β·ERP); rf ±100bp moves values
+  only ±3–5% (g and WACC co-move); real hole is user overrides. Awaiting owner.
+- **Structural-bias re-measurement (2026-08-16):** `python -m diagnostics
+  --bias` runs profiles-off vs profiles-on arms. Result on the 47-name
+  universe: growth decorrelated (−0.25 → +0.10), WACC partial (−0.61 → −0.49),
+  beta unchanged (−0.40 → −0.39); INSIDE the compounder cohort WACC/beta
+  correlations worsened (−0.50 → −0.57, −0.45 → −0.52) — the g-at-rf lever's
+  1/(WACC−g) payoff is itself WACC-shaped. Reported as measured; no tuning.
+
 - **Sensitivity g-axis (owner, 2026-08-14):** WACC × g grid is 5×9 — g ±100 bp
   at 25 bp steps (was 5×5 at 50 bp), symmetric, base center; convention in
   methodology.yaml. Old cells survive verbatim as the new even columns.

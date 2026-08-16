@@ -50,10 +50,11 @@ def pearson(xs: list[float], ys: list[float]) -> float:
     return cov / (vx * vy) ** 0.5 if vx > 0 and vy > 0 else float("nan")
 
 
-def run_ticker(ticker: str, edgar, provider) -> dict:
+def run_ticker(ticker: str, edgar, provider, profile: str | None = "auto") -> dict:
     history = build_financial_history(ticker, edgar)
     market = build_market_inputs(ticker, provider, as_of=VALUATION_DATE)
-    m = build_model(history, market, valuation_date=VALUATION_DATE)
+    m = build_model(history, market, valuation_date=VALUATION_DATE,
+                    profile=profile)
     price = market.price.value
     a = m.assumptions
 
@@ -86,6 +87,7 @@ def run_ticker(ticker: str, edgar, provider) -> dict:
                          if c not in ("unmapped_item",)})
     return {
         "ticker": ticker, "sector": history.company.sic_description[:28],
+        "profile": a.profile.tag if a.profile else None,
         "price": price, "gordon": gordon, "exit": exit_ps,
         "gap_gordon": gordon / price - 1 if gordon is not None else None,
         "gap_exit": exit_ps / price - 1 if exit_ps else None,
@@ -104,10 +106,35 @@ def run_ticker(ticker: str, edgar, provider) -> dict:
     }
 
 
+def bias_panel(rows: list[dict], label: str) -> dict:
+    """The structural-bias measurement (owner item 4, 2026-08-16): is the
+    gap to market predictable from company characteristics? Correlations
+    toward zero are success; a smaller median gap is NOT success."""
+    valued = [r for r in rows if r["gap_gordon"] is not None]
+    gaps = sorted(r["gap_gordon"] for r in valued)
+    n = len(gaps)
+    median = gaps[n // 2] if n % 2 else (gaps[n // 2 - 1] + gaps[n // 2]) / 2
+    q1, q3 = gaps[n // 4], gaps[(3 * n) // 4]
+    out = {"label": label, "n": n, "median_gap": median,
+           "iqr": (q1, q3)}
+    for char in ("wacc", "beta", "fy1_growth"):
+        xs = [r[char] for r in valued]
+        out[f"corr_{char}"] = pearson([r["gap_gordon"] for r in valued], xs)
+    print(f"\n[{label}]  n={n}  median gap {median:+.0%}  "
+          f"IQR [{q1:+.0%}, {q3:+.0%}]")
+    print(f"  corr(gap, WACC)       = {out['corr_wacc']:+.3f}")
+    print(f"  corr(gap, beta)       = {out['corr_beta']:+.3f}")
+    print(f"  corr(gap, FY1 growth) = {out['corr_fy1_growth']:+.3f}")
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=None)
     parser.add_argument("--tickers", nargs="*", default=None)
+    parser.add_argument("--bias", action="store_true",
+                        help="run profiles-off AND profiles-on arms and "
+                             "report the structural-bias panels")
     args = parser.parse_args()
 
     cache = SqliteCache(".scan_cache.sqlite")
@@ -117,16 +144,20 @@ def main() -> int:
                      os.environ.get("ALPACA_API_SECRET_KEY", "")),
         FredClient(os.environ.get("FRED_API_KEY", "")), cache=cache)
 
-    rows, failures = [], []
+    rows, base_rows, failures = [], [], []
     for ticker in args.tickers or UNIVERSE:
         try:
             rows.append(run_ticker(ticker, edgar, provider))
+            if args.bias:
+                base_rows.append(run_ticker(ticker, edgar, provider,
+                                            profile=None))
             r = rows[-1]
             gg = (f"{r['gap_gordon']:>+7.0%}" if r["gap_gordon"] is not None
                   else "  unavl")
             print(f"{ticker:<6} gordon {r['gordon'] if r['gordon'] is not None else float('nan'):>9.2f}  "
                   f"exit {r['exit'] or float('nan'):>9.2f}  "
-                  f"price {r['price']:>9.2f}  gap_g {gg}")
+                  f"price {r['price']:>9.2f}  gap_g {gg}  "
+                  f"{r['profile'] or '-'}")
         except (IngestError, MarketDataError, Exception) as exc:  # noqa: BLE001
             failures.append((ticker, type(exc).__name__, str(exc)[:140]))
             print(f"{ticker:<6} FAILED {type(exc).__name__}: {str(exc)[:110]}")
@@ -140,10 +171,25 @@ def main() -> int:
     print(f"corr(gap_gordon, capex_pct)  = {pearson(gaps, capex):+.3f}")
     print(f"corr(gap_gordon, fy1_growth) = {pearson(gaps, growth):+.3f}")
 
+    panels = {}
+    if args.bias:
+        panels["before"] = bias_panel(base_rows, "profiles OFF (before)")
+        panels["after"] = bias_panel(rows, "profiles ON (after)")
+        comp = {r["ticker"] for r in rows
+                if r["profile"] and r["profile"].startswith("compounder")}
+        panels["compounders_before"] = bias_panel(
+            [r for r in base_rows if r["ticker"] in comp],
+            "compounder cohort, profiles OFF")
+        panels["compounders_after"] = bias_panel(
+            [r for r in rows if r["ticker"] in comp],
+            "compounder cohort, profiles ON")
+
     if args.out:
         with open(args.out, "w") as fh:
             json.dump({"valuation_date": VALUATION_DATE.isoformat(),
-                       "rows": rows, "failures": failures}, fh, indent=2)
+                       "rows": rows, "base_rows": base_rows,
+                       "bias_panels": panels or None,
+                       "failures": failures}, fh, indent=2)
         print(f"written: {args.out}")
     return 0
 
