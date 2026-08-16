@@ -406,3 +406,20 @@ class TestDaBasisSplit20260816:
         _h, m = _engine_model(ticker)
         assert all(p.balance["ppe_net"] >= 0.0 for p in m.projections), \
             "negative projected PP&E — the pre-split defect is back"
+
+
+class TestUtilityScopeDecision20260816:
+    """Owner decision 2026-08-16: D and ED are honest refusals while
+    regulated utilities stay out of scope. IMPORTANT correction recorded
+    here: neither is an NEE-class extension-tag filer — D files capex as a
+    NET productive-assets flow (PaymentsForProceedsFromProductiveAssets,
+    FY2025 $12.65B) and ED files gross construction spend under
+    PaymentsForConstructionInProcess (FY2025 $4.76B). Both are one-line
+    chain changes away from mapping if utilities ever enter scope; the
+    refusal is the scope decision, not a data impossibility."""
+
+    @pytest.mark.parametrize("ticker,needle", [
+        ("D", "net"), ("ED", "PaymentsForConstructionInProcess")])
+    def test_entry_present_with_verified_reason(self, ticker, needle):
+        from ingest.assemble import known_unsupported
+        assert needle in known_unsupported()[ticker]

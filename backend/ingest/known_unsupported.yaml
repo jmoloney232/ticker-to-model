@@ -24,3 +24,21 @@
     direct share chain and the NI÷EPS derivation used for other dual-class
     filers are therefore impossible. Filing-level dimensional XBRL support
     is a later phase.
+
+- ticker: D
+  reason: >
+    Dominion Energy reports capital expenditures only as a net
+    productive-assets flow (payments net of disposal proceeds — verified: no
+    gross us-gaap capex tag carries a value in any year). A DCF needs gross
+    capex, and treating the net flow as gross would silently fold asset
+    sales into reinvestment. Regulated-utility support is a deliberate
+    later phase (owner decision, 2026-08-16).
+
+- ticker: ED
+  reason: >
+    Consolidated Edison files its utility construction spending under a
+    rate-regulated presentation (PaymentsForConstructionInProcess) outside
+    the standard capex chains (verified FY2025), and regulated-utility
+    economics — rate-base reinvestment, regulator-smoothed revenue — sit
+    poorly with history-derived defaults. Regulated-utility support is a
+    deliberate later phase (owner decision, 2026-08-16).
