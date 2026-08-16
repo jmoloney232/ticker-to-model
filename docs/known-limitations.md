@@ -232,3 +232,23 @@ schedule) or an arbitrary split — both out of v1 scope.
 share of R&D/S&M into the normalized earnings base with a documented
 amortization rule. Named as a future refinement in methodology.yaml
 (`epv_method`).
+
+## 12. One-off years contaminate normalized defaults (scoped; partially mitigated)
+
+**What:** derived defaults normalize history, and nothing in the engine knows
+that a year contained an impairment or an acquired-IPR&D charge. KHC's
+impairment year and MRK's charge years both surfaced it. Mitigations to date
+are structural, not semantic: the declining profile's EPV margin uses the
+window MEDIAN (owner-approved 2026-08-16 — robust to a single distorted year),
+loss years are excluded from the tax derivation, cyclicals average full
+windows.
+
+**Why:** classifying non-recurring items requires either XBRL charge-tag
+ingestion with a recurrence guard, or judgment calls the engine refuses to
+make silently.
+
+**Fixing it would require:** the design in
+`docs/proposals/non-recurring-normalization.md` — ~8 charge-item chains, an
+adjusted-EBIT series for normalization only, a ≥3-of-window recurrence guard,
+and a classifier-distribution re-scan. Scoped, awaiting an owner decision;
+deliberately not built as an incremental patch.

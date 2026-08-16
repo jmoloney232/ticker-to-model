@@ -21,7 +21,7 @@ EPV_MARGIN_RULES = {
     "mature": "trailing_3y_mean",
     "compounder": "trailing_3y_mean",
     "cyclical": "full_window_mean",
-    "declining": "latest_year",
+    "declining": "window_median",
     "collision": "declining_wins",
 }
 GROWTH_CAP = 0.30            # owner decision: the default must be defensible;
@@ -507,14 +507,17 @@ def _apply_profile(a: Assumptions, prof, history: FinancialHistory,
     # question: projecting a cost structure forward vs. capitalizing today's
     # demonstrated earnings power).
     if prof.primary == "declining":
-        fy0 = history.periods[-1]
+        w_full = history.periods
         set_default("epv_margin",
-                    fy0.value("operating_income") / fy0.value("revenue"),
-                    "Profile: latest-year operating margin — older margins "
-                    "reflect scale the business no longer has; the decline "
-                    "itself belongs in the DCF − EPV growth gap, never "
-                    "extrapolated into a no-growth number (declining wins "
-                    "over cyclical here)")
+                    _median([p.value("operating_income") / p.value("revenue")
+                             for p in w_full]),
+                    f"Profile: {len(w_full)}y window MEDIAN operating margin "
+                    "— robust to a single distorted year (impairment, "
+                    "charge) without classifying anything as non-recurring; "
+                    "a mean would average the distortion in, the latest year "
+                    "might BE the distortion (KHC). The decline itself "
+                    "belongs in the DCF − EPV growth gap (declining wins "
+                    "over cyclical here; owner-approved 2026-08-16)")
     elif "cyclical" in prof.modifiers:
         w_full = history.periods
         set_default("epv_margin",

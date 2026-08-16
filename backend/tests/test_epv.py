@@ -119,14 +119,18 @@ class TestMarginNormalization:
         # compounder keeps the house rule → the default is NOT profile-tagged
         assert a_auto.fields["epv_margin"].profile_tag is None
 
-    def test_declining_uses_latest_year(self):
-        # KHC classifies declining(+cyclical): latest margin, declining wins
+    def test_declining_uses_window_median(self):
+        # KHC classifies declining(+cyclical): window MEDIAN, declining wins
+        # (owner 2026-08-16 — robust to the impairment year without any
+        # non-recurring classification; the latest year IS the distortion)
         h, _, a = fixture_assumptions("KHC")
         assert a.profile.primary == "declining"
         f = a.fields["epv_margin"]
-        assert f.value == pytest.approx(_margin(h.periods[-1]))
+        margins = sorted(_margin(p) for p in h.periods)
+        assert f.value == pytest.approx(margins[len(margins) // 2])
+        assert f.value > 0                      # the -18.7% year is ignored
         assert f.profile_tag == a.profile.tag
-        assert "declining wins" in f.derivation
+        assert "MEDIAN" in f.derivation
 
     def test_cyclical_uses_full_window(self):
         # forced reassignment exercises the cyclical (non-declining) rule
@@ -135,9 +139,13 @@ class TestMarginNormalization:
             _mean([_margin(p) for p in h.periods]))
 
     def test_collision_declining_beats_cyclical(self):
+        # declining's MEDIAN beats cyclical's MEAN over the same window
         h, _, a = fixture_assumptions("MSFT", profile="declining+cyclical")
+        margins = sorted(_margin(p) for p in h.periods)
         assert a.fields["epv_margin"].value == pytest.approx(
-            _margin(h.periods[-1]))
+            margins[len(margins) // 2])
+        assert a.fields["epv_margin"].value != pytest.approx(
+            _mean([_margin(p) for p in h.periods]))
 
 
 # ── availability + the growth line ───────────────────────────────────────────
@@ -321,13 +329,24 @@ class TestEpvVerdict:
         assert "no growth" in v["text"] and "below its" in v["text"]
 
     def test_negative_earnings_names_the_dcf_way_out(self):
-        h, mkt, _ = fixture_assumptions("KHC")
-        m = build_model(h, mkt, valuation_date=GOLDEN_VD)
+        # toy with a stated negative margin (KHC no longer exercises this
+        # state: the median rule gives it a positive normalized margin)
+        m = build_model(toy_history(), toy_market(), valuation_date=VD,
+                        overrides={"epv_margin": -0.10}, profile=None)
         doc = serialize_model(m, None, None, None)
         v = doc["epv_verdict"]
         assert v["state"] == "no_epv"
         assert "normalized operating margin is negative" in v["text"]
         assert "DCF view" in v["text"]
+
+    def test_khc_declining_reads_value_destructive_now(self):
+        # the median rule makes KHC's EPV available — and the growth line
+        # correctly reads value-destructive (decline is worth less than
+        # holding today's earnings power flat)
+        h, mkt, _ = fixture_assumptions("KHC")
+        m = build_model(h, mkt, valuation_date=GOLDEN_VD)
+        assert m.growth.available
+        assert m.growth.state == "value_destructive"
 
     def test_negative_equity_is_reframed_not_priced(self):
         m = build_model(toy_history(), toy_market(), valuation_date=VD,

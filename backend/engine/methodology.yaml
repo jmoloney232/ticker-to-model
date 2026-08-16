@@ -666,12 +666,12 @@ conventions:
   - id: epv_margin_normalization
     label: EPV margin normalization (by profile)
     category: valuation
-    default: "Normalized EBIT margin applied to FY0 revenue — mature and compounder: trailing 3y mean; cyclical modifier: full observed window; declining: latest year. When declining and cyclical collide, declining wins"
+    default: "Normalized EBIT margin applied to FY0 revenue — mature and compounder: trailing 3y mean; cyclical modifier: full observed window mean; declining: full-window MEDIAN. When declining and cyclical collide, declining wins"
     rules:
       mature: trailing_3y_mean
       compounder: trailing_3y_mean
       cyclical: full_window_mean
-      declining: latest_year
+      declining: window_median
       collision: declining_wins
     derivation: >
       Cyclical filers average across the full window because capitalizing
