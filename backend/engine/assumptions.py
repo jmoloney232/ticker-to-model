@@ -106,6 +106,19 @@ def _pct_of_revenue(window: list[FiscalPeriod], item: str) -> float:
     return _mean([p.value(item, 0.0) / p.value("revenue") for p in window])
 
 
+def _dep_pct_of_revenue(window: list[FiscalPeriod]) -> float:
+    """Depreciation-only % of revenue: D&A minus intangible amortization,
+    skipping years where amortization is unobservable if the filer maps it
+    anywhere in the window (same observability guard as the PP&E-roll rate);
+    combined basis when it is observable nowhere."""
+    seen = [p.get("amortization_intangibles") is not None for p in window]
+    usable = [p for p, s in zip(window, seen, strict=True)
+              if s or not any(seen)]
+    return _mean([max(p.value("d_and_a", 0.0)
+                      - p.value("amortization_intangibles", 0.0), 0.0)
+                  / p.value("revenue") for p in usable])
+
+
 def _prior_pairs(history: FinancialHistory) -> list[tuple[FiscalPeriod, FiscalPeriod]]:
     """(prior, current) pairs, most recent min(3, available) — for ratios that
     need a beginning balance."""
@@ -162,17 +175,53 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs,
         "margin-identity closure line; costs attributable to no named item, "
         "projected explicitly (never silently absorbed into the margin)")
 
-    # ── D&A memo rate (PP&E roll; % of revenue fallback) ───────────────────
-    da_ratios = [(cur.value("d_and_a", 0.0), prev.value("ppe_net", 0.0))
-                 for prev, cur in _prior_pairs(history)]
-    usable = [d / ppe for d, ppe in da_ratios if ppe > 0]
-    if usable:
-        add("da_pct_beginning_ppe", _mean(usable),
-            "3y mean D&A / beginning net PP&E (memo line: CF add-back, PP&E roll, "
-            "EBITDA — never subtracted from ratio-projected cost lines)")
+    # ── D&A memo rates: depreciation on PP&E, amortization on intangibles ──
+    # (owner-approved 2026-08-16.) dep = d_and_a − amortization_intangibles —
+    # SUBTRACTION, never the Depreciation tag: under-inclusive tags (AMZN's
+    # finance-lease amortization) corrupt a tag-based rate, while everything
+    # in D&A that isn't intangible amortization belongs to the capex-
+    # replenished physical pool. A combined rate against PP&E alone made the
+    # roll a divergent recurrence for amortization-heavy filers (AVGO: 323%
+    # of beginning PP&E, coefficient −2.23). Pairs where amortization is
+    # unobservable are skipped when the filer maps it anywhere in the window
+    # (AVGO files it FY2025 only — earlier years are dimension-stripped in
+    # companyfacts); observable nowhere → combined basis retained, disclosed
+    # via amortization_unobservable (dcf) when intangibles are material.
+    pairs = _prior_pairs(history)
+    amort_seen = [cur.get("amortization_intangibles") is not None
+                  for _, cur in pairs]
+    dep_rates, amort_rates = [], []
+    for (prev, cur), seen in zip(pairs, amort_seen, strict=True):
+        if any(amort_seen) and not seen:
+            continue
+        am = cur.value("amortization_intangibles", 0.0)
+        ppe = prev.value("ppe_net", 0.0)
+        intang = prev.value("intangibles", 0.0)
+        if ppe > 0:
+            dep_rates.append(max(cur.value("d_and_a", 0.0) - am, 0.0) / ppe)
+        if seen and intang > 0:
+            amort_rates.append(min(am / intang, 1.0))
+    if dep_rates:
+        basis = (f"{len(dep_rates)}y mean (D&A − intangible amortization)"
+                 if any(amort_seen) else
+                 f"{len(dep_rates)}y mean D&A — amortization unobservable, "
+                 "combined basis retained")
+        add("dep_pct_beginning_ppe", _mean(dep_rates),
+            f"{basis} / beginning net PP&E. Drives the PP&E roll; capped at "
+            "the available balance plus capex (identity guard — net PP&E "
+            "cannot depreciate below zero). Memo line only: CF add-back, "
+            "EBITDA — never subtracted from ratio-projected cost lines")
     else:
         add("da_pct_revenue", _pct_of_revenue(w, "d_and_a"),
             "PP&E unmapped → 3y mean D&A / revenue (disclosed fallback)")
+    if amort_rates:
+        add("amort_pct_beginning_intangibles", _mean(amort_rates),
+            f"{len(amort_rates)}y mean intangible amortization / beginning "
+            "intangibles (excl. goodwill). The existing balance runs off — "
+            "no new intangibles, matching the forecast's no-M&A stance — so "
+            "the add-back expires with it (owner-approved run-off treatment); "
+            "the amortization embedded in as-filed cost ratios remains in "
+            "EBIT throughout, deliberately conservative for serial acquirers")
 
     add("capex_pct", _pct_of_revenue(w, "capex"), "3y mean capex / revenue")
     add("sbc_pct", _pct_of_revenue(w, "stock_compensation"),
@@ -357,11 +406,13 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs,
         "the reinvestment_fade_mismatch warning. Set ON by the "
         "reinvestment-heavy profile; editable", unit="flag")
     add("capex_terminal_pct",
-        _pct_of_revenue(w, "d_and_a") * (1 + a["terminal_growth"].value),
-        "Maintenance capex: trailing 3y D&A/revenue × (1 + terminal g) — "
-        "replacement burden plus the growth increment on the asset base. "
-        "Used only when capex_fade is ON; perpetual reinvestment after the "
-        "horizon is RR = g/ROIC's job, not this line's")
+        _dep_pct_of_revenue(w) * (1 + a["terminal_growth"].value),
+        "Maintenance capex: trailing 3y depreciation/revenue × (1 + terminal "
+        "g) — replacement burden plus the growth increment on the asset "
+        "base. Depreciation-only basis (owner-approved 2026-08-16): capex "
+        "replaces physical assets; run-off amortization is not replaced "
+        "under the no-M&A stance. Used only when capex_fade is ON; perpetual "
+        "reinvestment after the horizon is RR = g/ROIC's job, not this line's")
     add("terminal_roic_fade", False,
         "OFF (default): terminal ROIC holds the 3y historical level in "
         "perpetuity — permanent excess returns, defensible for durable moats "

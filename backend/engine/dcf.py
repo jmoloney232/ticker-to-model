@@ -599,6 +599,41 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                      "your view."),
             detail={"capex_over_da": capex_n / da_n, "final_year_growth": g_n}))
 
+    # Split D&A basis disclosures (owner-approved 2026-08-16).
+    window = history.periods[-3:]
+    intang0 = fy0.value("intangibles", 0.0)
+    ppe0 = fy0.value("ppe_net", 0.0)
+    if (all(p.get("amortization_intangibles") is None for p in window)
+            and intang0 > 0.25 * ppe0 and intang0 > 0):
+        warnings.append(EngineWarning(
+            code="amortization_unobservable", severity="info",
+            message=(f"Intangibles (${intang0 / 1e9:,.1f}B) exceed 25% of net "
+                     f"PP&E (${ppe0 / 1e9:,.1f}B) but the filer does not tag "
+                     "intangible amortization separately, so the D&A basis "
+                     "cannot be split: the PP&E roll keeps the combined rate "
+                     "and intangibles are held flat. The same 25% constant as "
+                     "the lease-magnitude disclosure."),
+            detail={"intangibles": intang0, "ppe_net": ppe0}))
+    if a.has("dep_pct_beginning_ppe"):
+        dep_rate = a.eff("dep_pct_beginning_ppe")
+        beg = ppe0
+        floored = []
+        for p in projections:
+            if p.cashflow["depreciation"] < dep_rate * beg * (1 - 1e-9):
+                floored.append(p.fiscal_year)
+            beg = p.balance["ppe_net"]
+        if floored:
+            warnings.append(EngineWarning(
+                code="ppe_roll_floor",
+                message=(f"The depreciation rate ({dep_rate:.0%} of beginning "
+                         "net PP&E) exceeds the available balance in "
+                         + ", ".join(f"FY{y}" for y in floored)
+                         + " — depreciation is capped at beginning PP&E plus "
+                           "capex (net PP&E cannot fall below zero). The "
+                           "derived rate is suspect; review the D&A basis."),
+                detail={"dep_pct_beginning_ppe": dep_rate,
+                        "years": floored}))
+
     stub = _stub(valuation_date, fy0.end)
     if stub > 1.0:
         warnings.append(EngineWarning(

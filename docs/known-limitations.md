@@ -252,3 +252,34 @@ make silently.
 adjusted-EBIT series for normalization only, a ≥3-of-window recurrence guard,
 and a classifier-distribution re-scan. Scoped, awaiting an owner decision;
 deliberately not built as an incremental patch.
+
+## 13. D&A basis: what the split fixed, and what it deliberately left (2026-08-16)
+
+**What was fixed:** the PP&E roll now consumes depreciation only
+(D&A − intangible amortization, subtraction-derived), intangibles run off at
+their own rate, and depreciation is capped at the available balance — an
+accounting identity that makes the roll unconditionally stable. Before the
+split, a combined rate against PP&E alone made the roll a divergent
+alternating recurrence for amortization-heavy serial acquirers (AVGO: 323%
+of beginning PP&E → −$3.1T projected PP&E, gordon −$342/share), and ABBV/AMD
+printed negative PP&E in three projected years each. Methodology:
+`da_basis_split`; regression tests pin AVGO/ABBV/AMD.
+
+**Deliberately left, flagged for a decision after the structural-bias
+re-measurement:** the profile classifier's capex/D&A measure and the
+`reinvestment_fade_mismatch` warning still use the combined D&A memo. On a
+depreciation-only basis, six filers cross a published trigger (DIS, MRK, NOW
+would gain `reinvestment_heavy`; CSCO, LLY, ORCL would cross the 4× suspect
+cap). Switching the basis mid-round would have made the profile
+before/after measurement unattributable, so the basis question is parked
+here, visible, until that measurement lands.
+
+**Also left:** filers who never tag intangible amortization separately
+(CRM, NFLX) keep the combined basis behind an `amortization_unobservable`
+disclosure — and for CRM specifically the mapped CF D&A line is the
+depreciation-flavored tag, so the projected CFO add-back omits ~$2.4B/yr of
+real non-cash amortization (conservative, disclosed). Because cost ratios
+stay as filed, EBIT keeps carrying amortization embedded in history after
+the projected run-off ends — deliberately conservative for serial acquirers
+(the no-add-back ↔ run-off ↔ perpetual ladder is documented in
+methodology `da_basis_split`).

@@ -26,7 +26,7 @@ const GROUPS: Matcher[] = [
       /(^cogs|^rnd|^sga|^other_opex|^unclassified|^sbc)/.test(r.name),
   ],
   ["Working capital", (r) => /(^dso$|^dio$|^dpo$|^oca|^ocl|^accrued|^defrev)/.test(r.name)],
-  ["Capital intensity", (r) => /(^capex|^da_pct)/.test(r.name)],
+  ["Capital intensity", (r) => /(^capex|^da_pct|^dep_pct|^amort_pct)/.test(r.name)],
   ["Taxes", (r) => /tax/.test(r.name)],
   [
     "Discount rate",

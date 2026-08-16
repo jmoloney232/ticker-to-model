@@ -85,10 +85,13 @@ presets:
         form: rule
         rule: "max(0.015, risk_free)"
       capex_pct:
-        # street fades capex to D&A parity by the terminal year; a single
-        # window ratio approximates a linear fade by its midpoint
+        # street fades capex to depreciation parity by the terminal year; a
+        # single window ratio approximates a linear fade by its midpoint.
+        # Depreciation-only basis (owner-approved 2026-08-16): parity means
+        # replacing physical assets — intangible amortization is not
+        # replaced by capex.
         form: rule
-        rule: "(capex_pct + da_pct_revenue_hist) / 2"
+        rule: "(capex_pct + dep_pct_revenue_hist) / 2"
       effective_tax_fy1:
         # marginal from FY1 (the default fades effective -> marginal)
         form: rule

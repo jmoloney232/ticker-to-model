@@ -339,3 +339,70 @@ class TestChainRound20260816:
         # honest message.
         from ingest.assemble import known_unsupported
         assert "share class" in known_unsupported()["HSY"]
+
+
+# ── Split D&A basis (owner-approved 2026-08-16) ──────────────────────────────
+
+def _engine_model(ticker: str):
+    """Fixture history + synthetic market (price/rf fixed, beta fallback).
+    These regressions pin projection MECHANICS, which do not depend on
+    market data; real-market values live in the diagnostic scans."""
+    from datetime import date
+
+    from engine.dcf import build_model
+    from market.models import MarketInputs, PricePoint, RatePoint
+
+    vd = date(2026, 8, 14)
+    h = build_financial_history(ticker, source_for(ticker))
+    mkt = MarketInputs(ticker=ticker,
+                       price=PricePoint(100.0, vd, "snapshot"),
+                       risk_free=RatePoint(0.045, vd, "snapshot"),
+                       beta=None, warnings=[])
+    return h, build_model(h, mkt, valuation_date=vd)
+
+
+class TestDaBasisSplit20260816:
+    """AVGO's combined D&A rate (323% of beginning PP&E — $8.06B of its
+    $8.64B FY2025 D&A is acquired-intangible amortization against $2.5B of
+    PP&E) made the PP&E roll a divergent alternating recurrence: −$3.1T
+    projected PP&E, ±$10T cash flows, gordon −$342/share. ABBV (168%) and
+    AMD (184%) converged but printed negative PP&E in 3 projected years
+    each. Split basis: depreciation = D&A − amortization drives the roll;
+    amortization runs the intangibles balance off."""
+
+    def test_avgo_amortization_mapped_and_rate_split(self):
+        h, m = _engine_model("AVGO")
+        f = h.periods[-1].cashflow["amortization_intangibles"]
+        assert f.tag == "us-gaap:AmortizationOfIntangibleAssets"
+        assert f.value == pytest.approx(8_062_000_000)
+        a = m.assumptions
+        # Per-period duration matching recovers FY2023/24 amortization from
+        # the FY2025 10-K's comparative columns, so all three pairs are
+        # observable → 3y mean ≈ 24.3% (FY2025 pair alone: (8.639−8.062)
+        # /2.523 ≈ 22.9%). The pre-split combined rate was 323%.
+        rate = a.eff("dep_pct_beginning_ppe")
+        assert 0.15 < rate < 0.35
+        assert "(D&A − intangible amortization)" in \
+            a.fields["dep_pct_beginning_ppe"].derivation
+
+    def test_avgo_projection_coherent_again(self):
+        _h, m = _engine_model("AVGO")
+        prev = None
+        for p in m.projections:
+            assert p.balance["ppe_net"] >= 0.0
+            assert p.balance["intangibles"] >= 0.0
+            if prev is not None:
+                assert p.balance["intangibles"] <= prev + 1e-6
+            prev = p.balance["intangibles"]
+            assert p.cashflow["d_and_a"] == pytest.approx(
+                p.cashflow["depreciation"]
+                + p.cashflow["amortization_intangibles"])
+        assert "gordon" in m.bridges
+        assert m.bridges["gordon"].value_per_share > 0
+        assert not any(w.code == "ppe_roll_floor" for w in m.warnings)
+
+    @pytest.mark.parametrize("ticker", ["ABBV", "AMD"])
+    def test_no_negative_projected_ppe(self, ticker):
+        _h, m = _engine_model(ticker)
+        assert all(p.balance["ppe_net"] >= 0.0 for p in m.projections), \
+            "negative projected PP&E — the pre-split defect is back"

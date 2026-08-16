@@ -314,8 +314,10 @@ conventions:
       ratios, D&A-inclusive as filed. DSO/DIO/DPO: 3y averages of 365·AR/rev,
       365·inv/COGS, 365·AP/COGS — by-nature filers substitute total operating costs
       (revenue − EBIT) for COGS, a projection ratio never presented as a comparable
-      DIO/DPO figure. Capex: % revenue (3y avg). D&A: % of beginning net PP&E
-      (3y avg; falls back to % revenue if PP&E unmapped). Payout ratio: 3y avg over
+      DIO/DPO figure. Capex: % revenue (3y avg). Depreciation: (D&A − intangible
+      amortization) as % of beginning net PP&E (3y avg; see da_basis_split;
+      falls back to combined D&A % of revenue if PP&E unmapped). Intangible
+      amortization: % of beginning intangibles, run-off. Payout ratio: 3y avg over
       positive-NI years, clamped [0,1]. Interest income yield: 3y avg effective
       yield on beginning cash, clamped [0, rf]. Effective tax: 3y avg excluding
       loss years, clamped [10%, 35%]. Other non-operating income: projected at zero
@@ -339,6 +341,38 @@ conventions:
       in the cost ratios and the memo D&A from the PP&E roll can drift apart in
       later projection years (memo D&A follows the capex path, embedded D&A follows
       revenue), so late-year EBITDA margins shift slightly rather than staying pinned.
+
+  - id: da_basis_split
+    label: Depreciation vs. intangible amortization (split basis)
+    category: projections
+    default: "Depreciation = (D&A − intangible amortization) as % of beginning net PP&E drives the PP&E roll; amortization of intangibles runs the existing intangibles balance off at its own derived rate and then stops; the D&A memo is their sum"
+    derivation: >
+      Subtraction, never the filer's Depreciation tag (under-inclusive tags —
+      finance-lease amortization and similar — corrupt a tag-based rate).
+      A combined rate against PP&E alone made the roll a divergent recurrence
+      for amortization-heavy serial acquirers: a filer whose D&A is dominated
+      by acquired-intangible amortization against a small physical asset base
+      (worst observed: 323% of beginning PP&E) projected oscillating negative
+      PP&E and meaningless cash flows. Depreciation is additionally capped at
+      beginning PP&E plus capex — an accounting identity (net PP&E cannot
+      fall below zero), not a tuned threshold — and the cap is disclosed
+      whenever it binds (ppe_roll_floor).
+    editable: true
+    tradeoff: >
+      Run-off treatment (owner decision, 2026-08-16): the existing balance
+      amortizes with its add-back, then both stop — matching the forecast's
+      no-M&A stance. The street alternative adds amortization back in
+      perpetuity (treats it as pure accounting fiction); the conservative
+      alternative never adds it back (treats embedded amortization as a real
+      cost). Run-off sits between: past deals' amortization is genuinely
+      non-cash, but perpetual add-back would invent future acquisitions'
+      amortization without their revenue. Because cost ratios stay as filed,
+      EBIT keeps carrying the amortization embedded in history after the
+      run-off ends — deliberately conservative for serial acquirers. When the
+      filer does not tag intangible amortization separately, the combined
+      basis is retained and disclosed (amortization_unobservable) whenever
+      intangibles exceed 25% of net PP&E — the same constant as the
+      lease-magnitude disclosure.
 
   - id: assumption_presets
     label: Assumption presets
@@ -398,7 +432,12 @@ conventions:
       capex-equals-depreciation is only valid under no growth and no inflation
       (Matthews & Rosenbloom), and survey capex typically exceeds depreciation. So the
       engine warns instead of auto-fading, and points at the street_convention preset
-      (midpoint fade to D&A parity) as the opinionated expression of a fade.
+      (midpoint fade to depreciation parity — depreciation-only basis, since
+      intangible amortization is not replaced by capex) as the opinionated
+      expression of a fade. The warning's own trigger still uses the combined
+      D&A memo; switching it to a depreciation basis is a flagged open
+      question (see known-limitations) deliberately deferred until after the
+      2026-08 structural-bias re-measurement.
 
   - id: unobservable_interest
     label: Unobservable interest lines
@@ -597,7 +636,7 @@ conventions:
   - id: capex_normalization
     label: Capex normalization (reinvestment-heavy)
     category: assumptions
-    default: "OFF unless the reinvestment-heavy modifier applies: capex % of revenue fades linearly from the trailing rate to maintenance — trailing 3y D&A/revenue × (1 + terminal g) — by the final forecast year"
+    default: "OFF unless the reinvestment-heavy modifier applies: capex % of revenue fades linearly from the trailing rate to maintenance — trailing 3y depreciation/revenue × (1 + terminal g), depreciation-only basis since run-off amortization is not replaced by capex — by the final forecast year"
     derivation: >
       Capex persistently ≥ 1.5× D&A means the asset base grows materially
       faster than it depreciates — held flat forever, that contradicts the

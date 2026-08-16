@@ -25,8 +25,11 @@ from .models import Assumptions, ProjectedPeriod
 # Noncurrent non-debt lines held flat at FY0 (owner decision, spec 04): no
 # defensible history-derived growth rule exists for these in v1, and an
 # explicit flat line is inspectable where a silent default is not.
+# intangibles is NOT flat: it rolls down by projected amortization (run-off,
+# owner-approved 2026-08-16) and stays flat only when amortization is
+# unobservable or the filer has none.
 FLAT_BALANCE_ITEMS = (
-    "short_term_investments", "goodwill", "intangibles", "long_term_investments",
+    "short_term_investments", "goodwill", "long_term_investments",
     "operating_lease_rou", "other_noncurrent_assets", "investments_combined_unsplit",
     "short_term_debt", "long_term_debt", "operating_lease_liability",
     "deferred_tax_liabilities", "pension_liability", "other_noncurrent_liabilities",
@@ -90,11 +93,13 @@ def project(history: FinancialHistory, assumptions: Assumptions
     capex_pcts = capex_path(a)
 
     debt0 = gross_debt(fy0)
-    da_on_ppe = a.has("da_pct_beginning_ppe")
+    da_on_ppe = a.has("dep_pct_beginning_ppe")
+    amort_on = a.has("amort_pct_beginning_intangibles")
 
     periods: list[ProjectedPeriod] = []
     prev_rev = fy0.value("revenue")
     prev_ppe = fy0.value("ppe_net", 0.0)
+    prev_intang = fy0.value("intangibles", 0.0)
     prev_cash = fy0.value("cash_and_equivalents", 0.0)
     prev_sti = fy0.value("short_term_investments", 0.0)
     prev_equity = fy0.value("stockholders_equity", 0.0)
@@ -130,8 +135,6 @@ def project(history: FinancialHistory, assumptions: Assumptions
         ebit = rev - costs
         income["operating_income"] = ebit
 
-        da = (a.eff("da_pct_beginning_ppe") * prev_ppe if da_on_ppe
-              else a.eff("da_pct_revenue") * rev)
         interest_exp = a.eff("embedded_debt_rate") * debt0
         interest_inc = a.eff("interest_income_yield") * (prev_cash + prev_sti)
         pretax = ebit - interest_exp + interest_inc      # other non-operating = 0
@@ -157,8 +160,25 @@ def project(history: FinancialHistory, assumptions: Assumptions
         }
         capex = capex_pcts[i] * rev
         sbc = a.eff("sbc_pct") * rev
-        ppe = prev_ppe + capex - da
+        # Split D&A basis (owner-approved 2026-08-16): the PP&E roll consumes
+        # depreciation only; the intangibles balance runs off at its own rate
+        # (no new intangibles — the forecast's no-M&A stance). Identity floor:
+        # net PP&E cannot depreciate below zero — this caps a pathological
+        # rate instead of letting the roll oscillate or diverge (a combined
+        # 323%-of-PP&E rate did exactly that); dcf discloses when it binds.
+        if da_on_ppe:
+            dep = min(a.eff("dep_pct_beginning_ppe") * prev_ppe,
+                      prev_ppe + capex)
+        else:
+            dep = a.eff("da_pct_revenue") * rev   # PP&E unmapped — no roll
+        amort = (min(a.eff("amort_pct_beginning_intangibles") * prev_intang,
+                     prev_intang)
+                 if da_on_ppe and amort_on else 0.0)
+        da = dep + amort
+        ppe = prev_ppe + capex - dep
         balance["ppe_net"] = ppe
+        intang = prev_intang - amort
+        balance["intangibles"] = intang
         for item in FLAT_BALANCE_ITEMS:
             balance[item] = _flat(fy0, item)
 
@@ -197,7 +217,8 @@ def project(history: FinancialHistory, assumptions: Assumptions
         cfo = ni + da + sbc - delta_nwc
         cfi = -capex
         cff = -dividends
-        cashflow = {"net_income": ni, "d_and_a": da, "stock_compensation": sbc,
+        cashflow = {"net_income": ni, "d_and_a": da, "depreciation": dep,
+                    "amortization_intangibles": amort, "stock_compensation": sbc,
                     "working_capital_change": -delta_nwc, "cash_from_operations": cfo,
                     "capex": capex, "cash_from_investing": cfi,
                     "dividends_paid": dividends, "cash_from_financing": cff,
@@ -217,6 +238,7 @@ def project(history: FinancialHistory, assumptions: Assumptions
         periods.append(ProjectedPeriod(fiscal_year=fy, fye=fye, income=income,
                                        balance=balance, cashflow=cashflow))
         prev_rev, prev_ppe, prev_cash = rev, ppe, cash
+        prev_intang = intang
         prev_sti = balance["short_term_investments"]
         prev_equity, prev_wc = equity, wc
 

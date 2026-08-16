@@ -39,7 +39,12 @@ import yaml
 from ingest.models import FinancialHistory
 from market.models import MarketInputs
 
-from .assumptions import _identity_gap, _pct_of_revenue, _window, check_domain
+from .assumptions import (
+    _dep_pct_of_revenue,
+    _identity_gap,
+    _window,
+    check_domain,
+)
 from .errors import InvalidAssumptionError, PresetUnavailableError
 from .models import Assumptions
 
@@ -181,7 +186,12 @@ def rule_namespace(history: FinancialHistory, market: MarketInputs,
     # regression is unavailable — max(beta_raw, 1.0) then resolves to 1.0,
     # which is the same stress the rule intends (disclosed in spec 04)
     ns.setdefault("beta_raw", ns.get("beta", 1.0))
-    ns["da_pct_revenue_hist"] = _pct_of_revenue(_window(history), "d_and_a")
+    # depreciation-only basis (owner-approved 2026-08-16): capex parity means
+    # replacing physical assets — intangible amortization is not replaced by
+    # capex, and a combined basis would fade an amortization-heavy filer's
+    # capex toward a number that is mostly acquisition accounting (AVGO: D&A
+    # 15% of revenue, capex 1%).
+    ns["dep_pct_revenue_hist"] = _dep_pct_of_revenue(_window(history))
 
     worst = min(history.periods,
                 key=lambda p: p.value("operating_income") / p.value("revenue"))

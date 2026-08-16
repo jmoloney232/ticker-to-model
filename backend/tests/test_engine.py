@@ -124,7 +124,7 @@ class TestMicroAssumptions:
             "sga_pct": 0.20, "other_opex_pct": 0.05,
             # named lines sum exactly to revenue − EBIT → no identity gap
             "unclassified_costs_pct": 0.0,
-            "da_pct_beginning_ppe": 0.10, "capex_pct": 0.08, "sbc_pct": 0.02,
+            "dep_pct_beginning_ppe": 0.10, "capex_pct": 0.08, "sbc_pct": 0.02,
             "dso": 36.5, "dio": 45.625, "dpo": 54.75,
             "oca_pct": 0.025, "accrued_pct": 0.04, "ocl_pct": 0.03,
             "defrev_pct": 0.02, "effective_tax_fy1": 0.20, "marginal_tax": 0.25,
@@ -235,6 +235,43 @@ class TestMicroTerminalAndBridge:
         assert b.value_per_share == pytest.approx(b.equity_value / 10.0)
         # a zero that means "unmapped" is labeled, never a bare zero
         assert items["pension_after_tax"].source == "zero_logged"
+
+
+class TestDaBasisSplitMechanics:
+    """Split D&A basis (owner-approved 2026-08-16). The identity floor makes
+    the PP&E roll unconditionally stable: pre-fix, a combined rate above
+    ~200% of beginning PP&E (AVGO: 323%) turned the roll into a divergent
+    alternating recurrence printing ±$10T cash flows. The floor is an
+    accounting identity — net PP&E cannot depreciate below zero — not a
+    tuned threshold, so it must hold for ANY rate."""
+
+    # Toy boundary: ppe0 800, capex 80 → the floor first binds when
+    # rate × 800 > 880, i.e. above 1.1; below 1.0 it can never bind
+    # (ppe·(rate−1) ≤ capex holds for every ppe when rate ≤ 1).
+    @pytest.mark.parametrize("rate", [0.05, 0.5, 0.9, 1.5, 3.23, 10.0])
+    def test_ppe_roll_stable_and_floor_disclosed_for_any_rate(self, rate):
+        m = toy_model(overrides={"dep_pct_beginning_ppe": rate})
+        for p in m.projections:
+            assert p.balance["ppe_net"] >= 0.0
+            assert abs(p.cashflow["d_and_a"]) < 1e6   # finite, sane scale
+            assert p.cashflow["d_and_a"] == pytest.approx(
+                p.cashflow["depreciation"]
+                + p.cashflow["amortization_intangibles"])
+        floored = any(w.code == "ppe_roll_floor" for w in m.warnings)
+        assert floored == (rate >= 1.5), rate
+
+    def test_toy_without_amort_item_keeps_combined_basis(self):
+        # No amortization_intangibles in the toy → combined basis retained,
+        # amortization line pinned at zero, intangibles (absent → 0) flat.
+        a = derive_assumptions(toy_history(), toy_market(), profile=None)
+        assert not a.has("amort_pct_beginning_intangibles")
+        assert "combined basis" in a.fields["dep_pct_beginning_ppe"].derivation
+        m = toy_model()
+        assert all(p.cashflow["amortization_intangibles"] == 0.0
+                   for p in m.projections)
+        # no material intangibles → the unobservable disclosure must NOT fire
+        assert not any(w.code == "amortization_unobservable"
+                       for w in m.warnings)
 
 
 class TestProperties:

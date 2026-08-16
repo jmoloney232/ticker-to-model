@@ -75,7 +75,7 @@ ASSET_EX_CASH_ITEMS = ("accounts_receivable", "inventory",
                        "ppe_net", "goodwill", "intangibles",
                        "operating_lease_rou", "long_term_investments",
                        "investments_combined_unsplit", "other_noncurrent_assets")
-FLAT_ITEMS = ("short_term_investments", "goodwill", "intangibles",
+FLAT_ITEMS = ("short_term_investments", "goodwill",
               "long_term_investments", "operating_lease_rou",
               "other_noncurrent_assets", "investments_combined_unsplit",
               "short_term_debt", "long_term_debt", "operating_lease_liability",
@@ -90,7 +90,8 @@ HIST_IS = ("revenue", "cost_of_revenue", "gross_profit",
            "shares_basic_wa", "shares_diluted_wa")
 HIST_BS = ("cash_and_equivalents",) + ASSET_EX_CASH_ITEMS + ("total_assets",) \
           + LIAB_ITEMS + ("total_liabilities",) + EQUITY_ITEMS
-HIST_CF = ("net_income", "d_and_a", "stock_compensation",
+HIST_CF = ("net_income", "d_and_a", "amortization_intangibles",
+           "stock_compensation",
            "working_capital_change", "cash_from_operations", "capex",
            "acquisitions", "cash_from_investing", "dividends_paid",
            "buybacks", "cash_from_financing", "fx_effect",
@@ -102,7 +103,8 @@ ASSUMPTION_GROUPS = [
     ("Cost structure (% of revenue, D&A-inclusive as filed)",
      ["cogs_pct", "rnd_pct", "sga_pct", "other_opex_pct",
       "unclassified_costs_pct"]),
-    ("Capital intensity", ["da_pct_beginning_ppe", "da_pct_revenue",
+    ("Capital intensity", ["dep_pct_beginning_ppe",
+                           "amort_pct_beginning_intangibles", "da_pct_revenue",
                            "capex_pct", "capex_terminal_pct", "sbc_pct"]),
     ("Working capital", ["dso", "dio", "dpo", "oca_pct", "accrued_pct",
                          "ocl_pct", "defrev_pct"]),
@@ -139,7 +141,7 @@ class _Writer:
         self.hist_row: dict[tuple[str, str], int] = {}
         self.model_row: dict[str, int] = {}
         self.val: dict[str, str] = {}      # key -> absolute ref "Valuation!$B$9"
-        self.da_on_ppe = self.a.has("da_pct_beginning_ppe")
+        self.da_on_ppe = self.a.has("dep_pct_beginning_ppe")
         self.by_function = self.a.cost_structure == "by_function"
 
     # ── small helpers ───────────────────────────────────────────────────────
@@ -508,13 +510,34 @@ class _Writer:
         self._header(ws, r, "MEMO — D&A, SBC, CAPEX (spec 04: D&A placement)",
                      span=2 + self.horizon)
         r += 1
+        # Split D&A basis (owner-approved 2026-08-16): depreciation drives the
+        # PP&E roll (MIN = identity floor — net PP&E cannot fall below zero);
+        # intangible amortization runs the intangibles balance off and stops
+        # at zero. D&A memo = the sum, exactly as the engine computes it.
         if self.da_on_ppe:
-            da = lambda i: (f"=da_pct_beginning_ppe"
-                            f"*{self._mcol(i - 1)}{R['ppe']}")
+            dep = lambda i: (f"=MIN(dep_pct_beginning_ppe"
+                             f"*{self._mcol(i - 1)}{R['ppe']},"
+                             f"{self._mcol(i - 1)}{R['ppe']}"
+                             f"+{self._mcol(i)}{R['capex']})")
         else:
-            da = lambda i: f"=da_pct_revenue*{self._mcol(i)}{R['revenue']}"
-        r = self._mrow(ws, r, "D&A (memo — CF, PP&E roll, EBITDA only)",
-                       "da", None, da)
+            dep = lambda i: f"=da_pct_revenue*{self._mcol(i)}{R['revenue']}"
+        r = self._mrow(ws, r, "Depreciation (memo — PP&E roll)", "dep",
+                       None, dep)
+        if self.da_on_ppe and self.a.has("amort_pct_beginning_intangibles"):
+            amort = lambda i: (f"=MIN(amort_pct_beginning_intangibles"
+                               f"*{self._mcol(i - 1)}{R['intangibles']},"
+                               f"{self._mcol(i - 1)}{R['intangibles']})")
+            amort_label = "Intangible amortization (memo — run-off)"
+        else:
+            amort = lambda i: 0
+            amort_label = ("Intangible amortization (unobservable — combined "
+                           "basis above)" if self.da_on_ppe
+                           else "Intangible amortization (n/a)")
+        r = self._mrow(ws, r, amort_label, "amort", None, amort)
+        r = self._mrow(ws, r, "D&A (memo — CF add-back, EBITDA only)",
+                       "da", None,
+                       lambda i: f"={self._mcol(i)}{R['dep']}"
+                                 f"+{self._mcol(i)}{R['amort']}")
         r = self._mrow(ws, r, "Stock-based compensation", "sbc", None,
                        lambda i: f"=sbc_pct*{self._mcol(i)}{R['revenue']}")
         # Capex % of revenue is LIVE: flat, or fading to maintenance when
@@ -556,9 +579,13 @@ class _Writer:
                        f"={self.anchor('balance', 'ppe_net')}",
                        lambda i: f"={self._mcol(i - 1)}{R['ppe']}"
                                  f"+{self._mcol(i)}{R['capex']}"
-                                 f"-{self._mcol(i)}{R['da']}")
+                                 f"-{self._mcol(i)}{R['dep']}")
+        r = self._mrow(ws, r, "Intangibles (run-off by amortization)",
+                       "intangibles",
+                       f"={self.anchor('balance', 'intangibles')}",
+                       lambda i: f"={self._mcol(i - 1)}{R['intangibles']}"
+                                 f"-{self._mcol(i)}{R['amort']}")
         flat_assets = [("Goodwill (held flat)", "goodwill", "goodwill"),
-                       ("Intangibles (held flat)", "intangibles", "intangibles"),
                        ("Operating lease ROU (held flat)", "rou",
                         "operating_lease_rou"),
                        ("Long-term investments (held flat)", "lti",
@@ -1109,7 +1136,7 @@ class _Writer:
                     c.number_format = FMT_PS
                     self.map[f"sens:g:{i}:{j}"] = (
                         "Sensitivity", f"{get_column_letter(2 + j)}{wr}")
-            r = helper_start + len(G_OFFSETS) * 11 + 2
+            r = helper_start + len(G_OFFSETS) * 14 + 2
         else:
             ws.cell(row=r, column=1,
                     value="WACC × g grid unavailable — the Gordon leg has a "
@@ -1169,14 +1196,17 @@ class _Writer:
         ufcf_rows: list[int] = []
         n6_row = 0
         for j in range(len(G_OFFSETS)):
-            base = start + j * 11
+            base = start + j * 14
             g = f"{get_column_letter(2 + j)}${head}"
             ws.cell(row=base, column=1,
                     value=f"g column {j + 1}").font = Font(bold=True)
             rows = {}
             for k, label in (("growth", "growth"), ("rev", "revenue"),
                              ("ebit", "EBIT"), ("capex", "capex"),
-                             ("da", "D&A"), ("ppe", "PP&E"), ("nwc", "NWC"),
+                             ("dep", "depreciation"),
+                             ("amort", "intangible amortization"),
+                             ("da", "D&A"), ("ppe", "PP&E"),
+                             ("intang", "intangibles"), ("nwc", "NWC"),
                              ("dnwc", "ΔNWC"), ("ufcf", "UFCF")):
                 rows[k] = base + 1 + len(rows)
                 ws.cell(row=rows[k], column=1,
@@ -1209,13 +1239,33 @@ class _Writer:
                         ).number_format = FMT_M
                 ppe_prev = (f"Model!$B${R['ppe']}" if i == 1
                             else f"{prev}{rows['ppe']}")
-                da_f = (f"=da_pct_beginning_ppe*{ppe_prev}" if self.da_on_ppe
-                        else f"=da_pct_revenue*{col}{rows['rev']}")
+                intang_prev = (f"Model!$B${R['intangibles']}" if i == 1
+                               else f"{prev}{rows['intang']}")
+                # split D&A basis, mirroring the Model sheet: depreciation
+                # drives the PP&E roll (MIN = identity floor), amortization
+                # runs the intangibles balance off
+                dep_f = (f"=MIN(dep_pct_beginning_ppe*{ppe_prev},"
+                         f"{ppe_prev}+{col}{rows['capex']})"
+                         if self.da_on_ppe
+                         else f"=da_pct_revenue*{col}{rows['rev']}")
+                ws.cell(row=rows["dep"], column=2 + i,
+                        value=dep_f).number_format = FMT_M
+                amort_f = (f"=MIN(amort_pct_beginning_intangibles"
+                           f"*{intang_prev},{intang_prev})"
+                           if self.da_on_ppe
+                           and self.a.has("amort_pct_beginning_intangibles")
+                           else 0)
+                ws.cell(row=rows["amort"], column=2 + i,
+                        value=amort_f).number_format = FMT_M
                 ws.cell(row=rows["da"], column=2 + i,
-                        value=da_f).number_format = FMT_M
+                        value=f"={col}{rows['dep']}+{col}{rows['amort']}"
+                        ).number_format = FMT_M
                 ws.cell(row=rows["ppe"], column=2 + i,
                         value=f"={ppe_prev}+{col}{rows['capex']}"
-                              f"-{col}{rows['da']}").number_format = FMT_M
+                              f"-{col}{rows['dep']}").number_format = FMT_M
+                ws.cell(row=rows["intang"], column=2 + i,
+                        value=f"={intang_prev}-{col}{rows['amort']}"
+                        ).number_format = FMT_M
                 basis = (f"cogs_pct*{col}{rows['rev']}" if self.by_function
                          else f"({col}{rows['rev']}-{col}{rows['ebit']})")
                 ws.cell(row=rows["nwc"], column=2 + i,
@@ -1235,13 +1285,13 @@ class _Writer:
                               f"-{col}{rows['capex']}-{col}{rows['dnwc']}"
                         ).number_format = FMT_M
             ufcf_rows.append(rows["ufcf"])
-        n6_row = start + len(G_OFFSETS) * 11
+        n6_row = start + len(G_OFFSETS) * 14
         ws.cell(row=n6_row, column=1,
                 value="NOPAT(N+1) per g column").font = Font(color=GRAY, size=9)
         for j in range(len(G_OFFSETS)):
             g = f"{get_column_letter(2 + j)}${head}"
             ufcf_row = ufcf_rows[j]
-            ebit5 = f"{self._mcol(self.horizon)}{ufcf_row - 6}"  # ebit row
+            ebit5 = f"{self._mcol(self.horizon)}{ufcf_row - 9}"  # ebit row
             ws.cell(row=n6_row, column=2 + j,
                     value=f"={ebit5}*(1+{g})*(1-marginal_tax)"
                     ).number_format = FMT_M

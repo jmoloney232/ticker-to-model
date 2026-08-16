@@ -57,7 +57,7 @@ def _flat_world_overrides(h):
         "other_opex_pct": fy0.value("other_operating", 0.0) / rev0,
         "unclassified_costs_pct":
             (rev0 - fy0.value("operating_income") - named) / rev0,
-        "capex_pct": (a.eff("da_pct_beginning_ppe")
+        "capex_pct": (a.eff("dep_pct_beginning_ppe")
                       * fy0.value("ppe_net") / rev0),
         "dso": 365 * fy0.value("accounts_receivable", 0.0) / rev0,
         "dio": 365 * fy0.value("inventory", 0.0) / cogs0,

@@ -609,6 +609,23 @@ items:
       - DepreciationAmortizationAndAccretionNet
     derive: "fallback: sum(Depreciation, AmortizationOfIntangibleAssets)"
 
+  - name: amortization_intangibles
+    label: Amortization of intangible assets
+    statement: cashflow
+    shape: duration
+    required: false
+    missing_rule: omit
+    tags: [AmortizationOfIntangibleAssets]
+    notes: >
+      Splits the D&A basis (owner-approved 2026-08-16): the engine's PP&E roll
+      depreciates on (d_and_a − this item); the intangibles balance runs off at
+      its own derived rate. Omitted (not zero-logged) because absence means
+      unobservable, not zero — the engine falls back to the combined basis and
+      warns (amortization_unobservable) when intangibles are material. Verified:
+      AVGO FY2025 $8.062B (FY2021–24 dimension-stripped in companyfacts — the
+      per-pair observability guard exists for exactly this), AMD FY2024 $2.40B /
+      FY2025 $2.30B, MSFT/ORCL/ABBV/MRK all recent years.
+
   - name: stock_compensation
     label: Stock-based compensation
     statement: cashflow
