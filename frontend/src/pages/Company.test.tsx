@@ -188,6 +188,7 @@ describe("the slider", () => {
     m.valuation[i] = {
       id: "gordon",
       label: "DCF — Gordon perpetuity",
+      family: "dcf",
       note: "",
       available: false,
       reason: {
@@ -247,5 +248,55 @@ describe("blocked states", () => {
       expect(screen.getByText(/No terminal growth below WACC/)).toBeTruthy(),
     );
     expect(screen.getByText("Return to derived defaults")).toBeTruthy();
+  });
+});
+
+describe("the DCF/EPV view split", () => {
+  it("opens in the EPV view from ?view=epv and renders its own verdict", async () => {
+    window.history.replaceState(null, "", "/company/MSFT?view=epv");
+    vi.stubGlobal("fetch", stubFetch(modelOk()).fn);
+    render(<Company ticker="MSFT" />);
+    await waitFor(() =>
+      expect(
+        screen.getByText(/On today's demonstrated earnings power alone/),
+      ).toBeTruthy(),
+    );
+    // the growth strip is phrased from the EPV side, with the way across
+    expect(screen.getByText(/on top of this/)).toBeTruthy();
+    expect(screen.getByText("See the DCF view →")).toBeTruthy();
+    // DCF machinery stays out: no slider, no drivers, no DCF hero bars
+    expect(screen.queryByRole("slider")).toBeNull();
+    expect(screen.queryByText("Discount rate (WACC)")).toBeNull();
+    expect(screen.queryByText("280.99")).toBeNull();
+  });
+
+  it("filters the EPV Model tab to the server's field list", async () => {
+    window.history.replaceState(null, "", "/company/MSFT?view=epv");
+    vi.stubGlobal("fetch", stubFetch(modelOk()).fn);
+    render(<Company ticker="MSFT" />);
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /model/i })).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /model/i }));
+    // share_count is on the EPV field list; growth and exit multiple are not
+    expect(screen.getByLabelText("Share count")).toBeTruthy();
+    expect(screen.queryByLabelText("Revenue growth fy1")).toBeNull();
+    expect(screen.queryByLabelText("Exit multiple")).toBeNull();
+  });
+
+  it("switches views in place and writes the URL param", async () => {
+    vi.stubGlobal("fetch", stubFetch(modelOk()).fn);
+    render(<Company ticker="MSFT" />);
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: /earnings power/i })).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("radio", { name: /earnings power/i }));
+    expect(window.location.search).toContain("view=epv");
+    expect(
+      screen.getByText(/On today's demonstrated earnings power alone/),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /^dcf/i }));
+    expect(window.location.search).not.toContain("view=epv");
+    expect(screen.getByText(/Microsoft is worth \$281 a share/)).toBeTruthy();
   });
 });

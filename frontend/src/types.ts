@@ -46,7 +46,12 @@ export interface MethodDetail {
   value: number;
 }
 
-export type MethodOut = { id: string; label: string; note: string } & (
+export type MethodOut = {
+  id: string;
+  label: string;
+  family: string; // dcf | epv — which view renders it (server-owned)
+  note: string;
+} & (
   | {
       available: true;
       value_per_share: number;
@@ -78,9 +83,20 @@ export interface GrowthOut {
   available: boolean;
   state: string; // positive | value_destructive | unavailable
   text: string; // server-written sentence — never composed client-side
+  epv_text: string; // the same number phrased from the EPV view's side
   per_share?: number | null;
   share_of_dcf?: number | null;
   reason?: Reason;
+}
+
+/* A view family: the DCF/EPV selector renders these — id, label, blurb,
+   and (for EPV) the exact assumption names the view exposes. Server-owned
+   and perturbation-tested; fields: null means the full surface. */
+export interface Family {
+  id: string;
+  label: string;
+  blurb: string;
+  fields: string[] | null;
 }
 
 export interface Grid {
@@ -224,7 +240,9 @@ export interface ModelOk {
   curves: Record<string, Curve>;
   drivers: Driver[];
   valuation: MethodOut[];
+  families: Family[];
   growth: GrowthOut;
+  epv_verdict: Verdict;
   wacc: Record<string, unknown>;
   ufcf: Record<string, number>[];
   projections: ProjectionRow[];

@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_engine import VD, toy_history, toy_market
+from test_engine import GOLDEN_VD, VD, toy_history, toy_market
 from test_profile import fixture_assumptions
 
 from app.serialize import growth_out, method_out, serialize_model
 from engine.assumptions import EPV_MARGIN_RULES, derive_assumptions
-from engine.dcf import build_model
+from engine.dcf import EPV_FIELDS, build_model
 from engine.models import MethodAvailability, MethodResult
 
 METHODOLOGY = Path(__file__).parent.parent / "engine" / "methodology.yaml"
@@ -182,7 +182,7 @@ class TestStates:
 
 def _stub_method():
     return MethodResult(
-        id="stub_method", label="Stub method", order=99,
+        id="stub_method", label="Stub method", order=99, family="dcf",
         availability=MethodAvailability(True), note="contract test",
         enterprise_value=123.0,
         bridge=None, detail=[])
@@ -195,7 +195,7 @@ class TestFourthMethodContract:
                         profile=None)
         stub = next(mr for mr in m.methods if mr.id == "epv")
         clone = MethodResult(
-            id="stub_method", label="Stub method", order=99,
+            id="stub_method", label="Stub method", order=99, family="dcf",
             availability=stub.availability, note="contract test",
             enterprise_value=stub.enterprise_value, bridge=stub.bridge,
             detail=stub.detail)
@@ -221,3 +221,131 @@ class TestFourthMethodContract:
                         profile=None)
         assert [mr.id for mr in sorted(m.methods, key=lambda x: x.order)] \
             == ["gordon", "exit_multiple", "epv"]
+
+
+# ── the DCF/EPV view split (owner-approved 2026-08-16) ───────────────────────
+
+class TestFamilies:
+    def test_methods_carry_their_family(self):
+        m = build_model(toy_history(), toy_market(), valuation_date=VD,
+                        profile=None)
+        fams = {mr.id: mr.family for mr in m.methods}
+        assert fams == {"gordon": "dcf", "exit_multiple": "dcf",
+                        "epv": "epv"}
+
+    def test_families_payload_is_server_owned(self):
+        m = build_model(toy_history(), toy_market(), valuation_date=VD,
+                        profile=None)
+        doc = serialize_model(m, None, None, None)
+        fams = doc["families"]
+        assert [f["id"] for f in fams] == ["dcf", "epv"]
+        assert fams[0]["fields"] is None            # DCF = full surface
+        assert fams[1]["fields"] == list(EPV_FIELDS)
+        for mo in doc["valuation"]:
+            assert mo["family"] in {f["id"] for f in fams}
+
+
+class TestEpvFieldContract:
+    """EPV_FIELDS is exact — the EPV view's filtered assumptions surface is
+    a tested contract, not a hand-maintained list. Every listed field moves
+    the EPV value (under the toggles that route to it); every unlisted
+    editable field leaves it bit-identical."""
+
+    def _epv(self, overrides, **market_kwargs):
+        m = build_model(toy_history(), toy_market(**market_kwargs),
+                        valuation_date=VD, overrides=overrides, profile=None)
+        return m.bridges["epv"].value_per_share
+
+    def test_no_unlisted_field_moves_epv(self):
+        from engine.assumptions import DISPLAY_ONLY
+        base = self._epv({})
+        a = derive_assumptions(toy_history(), toy_market(), profile=None)
+        tested = []
+        for f in a.fields.values():
+            if f.name in EPV_FIELDS or f.name in DISPLAY_ONLY:
+                continue
+            v = f.effective
+            if isinstance(v, bool):
+                bumped = not v
+            elif f.name == "forecast_years":
+                bumped = 7
+            elif v is None:
+                continue
+            else:
+                bumped = v * 1.1 + 0.001
+            assert self._epv({f.name: bumped}) == pytest.approx(
+                base, rel=1e-12), f"{f.name} leaked into EPV"
+            tested.append(f.name)
+        assert len(tested) > 10        # the sweep actually swept
+
+    # (base overrides, alt overrides, market kwargs) — pairs chosen so the
+    # field's routing toggle is active (embedded Kd needs kd_synthetic off;
+    # beta_adjusted needs a beta whose Blume adjustment differs from raw)
+    MOVES = {
+        "epv_margin": ({}, {"epv_margin": 0.30}, {}),
+        "marginal_tax": ({}, {"marginal_tax": 0.30}, {}),
+        "midyear": ({}, {"midyear": False}, {}),
+        "beta": ({}, {"beta": 1.4}, {}),
+        "beta_adjusted": ({}, {"beta_adjusted": False}, {"beta": 1.5}),
+        "erp": ({}, {"erp": 0.06}, {}),
+        "risk_free": ({}, {"risk_free": 0.05}, {}),
+        "coverage_ratio": ({"coverage_ratio": 12.0},
+                           {"coverage_ratio": 1.2}, {}),
+        "kd_synthetic": ({"embedded_debt_rate": 0.09},
+                         {"embedded_debt_rate": 0.09, "kd_synthetic": False},
+                         {}),
+        "embedded_debt_rate": ({"kd_synthetic": False,
+                                "embedded_debt_rate": 0.06},
+                               {"kd_synthetic": False,
+                                "embedded_debt_rate": 0.08}, {}),
+        "share_count": ({}, {"share_count": 12.0}, {}),
+        "cash_floor_pct": ({}, {"cash_floor_pct": 0.05}, {}),
+    }
+
+    def test_every_listed_field_moves_epv(self):
+        assert set(self.MOVES) == set(EPV_FIELDS)   # pairs cover the list
+        for name, (base_o, alt_o, mk) in self.MOVES.items():
+            lo = self._epv(base_o, **mk)
+            hi = self._epv(alt_o, **mk)
+            assert lo != pytest.approx(hi, rel=1e-9), \
+                f"{name} is listed but does not move EPV"
+
+
+class TestEpvVerdict:
+    def test_ok_state_reads_below_price(self):
+        h, mkt, _ = fixture_assumptions("MSFT")
+        m = build_model(h, mkt, valuation_date=GOLDEN_VD)
+        doc = serialize_model(m, None, None, None)
+        v = doc["epv_verdict"]
+        assert v["state"] == "ok"
+        assert "no growth" in v["text"] and "below its" in v["text"]
+
+    def test_negative_earnings_names_the_dcf_way_out(self):
+        h, mkt, _ = fixture_assumptions("KHC")
+        m = build_model(h, mkt, valuation_date=GOLDEN_VD)
+        doc = serialize_model(m, None, None, None)
+        v = doc["epv_verdict"]
+        assert v["state"] == "no_epv"
+        assert "normalized operating margin is negative" in v["text"]
+        assert "DCF view" in v["text"]
+
+    def test_negative_equity_is_reframed_not_priced(self):
+        m = build_model(toy_history(), toy_market(), valuation_date=VD,
+                        overrides={"epv_margin": 0.001}, profile=None)
+        assert m.bridges["epv"].value_per_share < 0    # the premise
+        doc = serialize_model(m, None, None, None)
+        v = doc["epv_verdict"]
+        assert v["state"] == "negative_equity"
+        assert "$-" not in v["text"] and "-$" not in v["text"]
+
+    def test_growth_text_is_phrased_per_view(self):
+        h, mkt, _ = fixture_assumptions("MSFT")
+        m = build_model(h, mkt, valuation_date=GOLDEN_VD)
+        g = serialize_model(m, None, None, None)["growth"]
+        assert "rests on growth" in g["text"]           # DCF-side phrasing
+        assert "on top of this" in g["epv_text"]        # EPV-side phrasing
+        m2 = build_model(toy_history(), toy_market(), valuation_date=VD,
+                         overrides={"epv_margin": 0.55}, profile=None)
+        g2 = serialize_model(m2, None, None, None)["growth"]
+        assert g2["state"] == "value_destructive"
+        assert "destroys value" in g2["epv_text"]

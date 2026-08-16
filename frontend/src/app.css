@@ -1546,3 +1546,84 @@ button {
 .pfields {
   margin-top: 8px;
 }
+
+/* ── DCF / EPV view selector (owner spec 2026-08-16) ─────────────────── */
+/* a band above the tabs: the choice made on the landing page, switchable
+   here; labels and blurbs come from the server's families payload */
+
+.viewband {
+  display: flex;
+  align-items: stretch;
+  border-bottom: var(--hair) solid var(--line-mid);
+  background: var(--panel);
+}
+.vseg {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 22px;
+  border-right: var(--hair) solid var(--line-soft);
+  color: var(--text-3);
+  position: relative;
+}
+.vseg-name {
+  font: 600 11px/1 var(--font-heading);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.vseg-blurb {
+  font: 500 10px/1.6 var(--font-mono);
+  color: var(--text-4);
+}
+.vseg.on {
+  color: var(--ink);
+  background: var(--paper);
+}
+.vseg.on .vseg-blurb {
+  color: var(--text-3);
+}
+.vseg.on::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 2px;
+  background: var(--steel);
+}
+
+/* the cross-view link inside the value-of-growth strip */
+.viewlink {
+  font: inherit;
+  color: var(--steel-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.viewlink:hover {
+  color: var(--ink);
+}
+
+/* the EPV hero's rule line (left pane, under the margin figure) */
+.epv-rule {
+  font: 500 10.5px/1.7 var(--font-mono);
+  color: var(--text-3-dark);
+  border-top: var(--hair) solid var(--line-soft-dark);
+  padding-top: 10px;
+  margin: 12px 0 10px;
+}
+
+/* the landing page's secondary path: EPV */
+.dl-alt {
+  display: inline-block;
+  margin-left: 14px;
+  padding: 9px 16px;
+  border: var(--hair) solid var(--line-mid);
+  color: var(--text-2);
+  font: 600 11.5px/1 var(--font-heading);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.dl-alt:hover {
+  border-color: var(--steel-deep);
+  color: var(--steel-deep);
+}

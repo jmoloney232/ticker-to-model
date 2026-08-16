@@ -257,6 +257,29 @@ def sensitivity_grids(history: FinancialHistory, assumptions: Assumptions,
 # ── valuation-methods registry (owner spec 2026-08-15) ──────────────────────
 # Ids are stable (share codes, tests, workbook map); display order and labels
 # live here, never in the frontend. The reverse DCF is not a method.
+#
+# Families (owner spec 2026-08-16): the user selects a VIEW — DCF or
+# earnings power — and each view exposes only its own methods and only the
+# assumptions it consumes. EPV_FIELDS is a tested contract: perturbing any
+# listed field moves the EPV value (under the toggles that route to it) and
+# perturbing any unlisted editable field leaves EPV bit-identical.
+
+EPV_FIELDS = (
+    "epv_margin", "marginal_tax", "midyear",             # the perpetuity
+    "beta", "beta_adjusted", "erp", "risk_free",         # cost of equity
+    "coverage_ratio", "kd_synthetic", "embedded_debt_rate",  # cost of debt
+    "share_count",                                       # WACC weights + /share
+    "cash_floor_pct",                                    # the shared bridge
+)
+
+FAMILIES = (
+    {"id": "dcf", "label": "DCF",
+     "blurb": "value the projected future",
+     "fields": None},                     # None = the full assumptions surface
+    {"id": "epv", "label": "Earnings power",
+     "blurb": "value today's profits at zero growth",
+     "fields": list(EPV_FIELDS)},
+)
 
 EPV_NOTE = ("No-growth view: normalized operating profit, taxed at the "
             "marginal rate, capitalized at WACC. Maintenance capex = D&A and "
@@ -279,6 +302,7 @@ def earnings_power(history: FinancialHistory, a: Assumptions, wacc: float,
     if ebit_norm <= 0:
         return MethodResult(
             id="epv", label="Earnings power (no growth)", order=2,
+            family="epv",
             availability=MethodAvailability(
                 False, "epv_negative_earnings",
                 f"Earnings power unavailable: normalized EBIT margin "
@@ -293,6 +317,7 @@ def earnings_power(history: FinancialHistory, a: Assumptions, wacc: float,
     bridge = build_bridge(history, a, "epv", ev)
     return MethodResult(
         id="epv", label="Earnings power (no growth)", order=2,
+        family="epv",
         availability=MethodAvailability(True), note=EPV_NOTE,
         enterprise_value=ev, bridge=bridge,
         detail=[
@@ -314,6 +339,7 @@ def _dcf_method(method_id: str, label: str, order: int, note: str,
                 extra: list[MethodDetail]) -> MethodResult:
     if method_id not in terminal:
         return MethodResult(id=method_id, label=label, order=order,
+                            family="dcf",
                             availability=MethodAvailability(
                                 False, reason_code, reason), note=note)
     leg, bridge = terminal[method_id], bridges[method_id]
@@ -328,6 +354,7 @@ def _dcf_method(method_id: str, label: str, order: int, note: str,
                      leg.pv / ev if ev > 0 else float("nan")),
     ] + extra
     return MethodResult(id=method_id, label=label, order=order,
+                        family="dcf",
                         availability=MethodAvailability(True), note=note,
                         enterprise_value=ev, bridge=bridge, detail=detail)
 

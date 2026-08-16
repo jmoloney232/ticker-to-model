@@ -624,7 +624,13 @@ conventions:
       or an honest unavailable state with a machine-readable reason. Display
       order is part of the registry (engine), never the frontend. Methods
       share the discount rate and the bridge so their disagreement isolates
-      the growth and terminal assumptions, not plumbing differences.
+      the growth and terminal assumptions, not plumbing differences. On the
+      website the methods are grouped into two selectable views (owner
+      decision 2026-08-16) — DCF (both DCF legs, the projection machinery)
+      and Earnings power (EPV alone, exposing only the assumptions EPV
+      actually consumes; that field list is perturbation-tested against the
+      engine). The workbook is never split: one file always carries every
+      method.
     editable: false
     tradeoff: >
       A single blended number would be tidier and is deliberately not

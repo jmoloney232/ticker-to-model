@@ -21,6 +21,7 @@ import { Assumptions } from "../components/Assumptions";
 import { AuditTab } from "../components/AuditTab";
 import { Caveats, CheckBand } from "../components/Caveats";
 import { Drivers } from "../components/Drivers";
+import { EpvHero } from "../components/EpvHero";
 import { GrowthSlider } from "../components/GrowthSlider";
 import { Hero } from "../components/Hero";
 import { ProfileBand } from "../components/ProfileBand";
@@ -34,6 +35,7 @@ import type { ModelBlocked, ModelOk, PresetInfo } from "../types";
 const DEBOUNCE_MS = 400;
 const TABS = ["summary", "model", "audit"] as const;
 type Tab = (typeof TABS)[number];
+type View = "dcf" | "epv";
 
 type Overrides = Record<string, number | boolean>;
 
@@ -60,6 +62,14 @@ function tabFromUrl(): Tab {
   return (TABS as readonly string[]).includes(t ?? "") ? (t as Tab) : "summary";
 }
 
+/* the DCF/EPV view selection (owner spec 2026-08-16) — chosen on the landing
+   page or switched here; carried in the URL so share links preserve it, and
+   old links (no param) default to DCF */
+function viewFromUrl(): View {
+  const v = new URLSearchParams(window.location.search).get("view");
+  return v === "epv" ? "epv" : "dcf";
+}
+
 function setUrlParam(key: string, value: string | null) {
   const params = new URLSearchParams(window.location.search);
   if (value == null) params.delete(key);
@@ -72,7 +82,11 @@ function setUrlParam(key: string, value: string | null) {
   );
 }
 
-function Header({ ticker, model }: { ticker: string; model: ModelOk | null }) {
+function Header({ ticker, model, view }: {
+  ticker: string;
+  model: ModelOk | null;
+  view: View;
+}) {
   const [t, setT] = useState(ticker);
   const price = model?.market.price;
   const basis = model?.company.filing_basis;
@@ -87,7 +101,8 @@ function Header({ ticker, model }: { ticker: string; model: ModelOk | null }) {
           onChange={(e) => setT(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && t.trim())
-              navigate(`/company/${t.trim().toUpperCase()}`);
+              navigate(`/company/${t.trim().toUpperCase()}` +
+                       (view === "epv" ? "?view=epv" : ""));
           }}
         />
         <span className="hd-name">{model?.company.name ?? "…"}</span>
@@ -113,22 +128,52 @@ function Header({ ticker, model }: { ticker: string; model: ModelOk | null }) {
   );
 }
 
+/* the DCF / Earnings-power selector — labels, blurbs, and order come from
+   the server's families payload, never from strings here */
+function ViewSwitch({ families, view, onView }: {
+  families: ModelOk["families"];
+  view: View;
+  onView: (v: View) => void;
+}) {
+  return (
+    <div className="viewband" role="radiogroup" aria-label="Valuation view">
+      {families.map((f) => (
+        <button
+          key={f.id}
+          type="button"
+          role="radio"
+          aria-checked={view === f.id}
+          className={`vseg${view === f.id ? " on" : ""}`}
+          onClick={() => onView(f.id as View)}
+        >
+          <span className="vseg-name">{f.label}</span>
+          <span className="vseg-blurb">{f.blurb}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TabBar({
   tab,
   onTab,
   model,
+  assumptionCount,
   detail,
   onDetail,
+  showDetail,
 }: {
   tab: Tab;
   onTab: (t: Tab) => void;
   model: ModelOk;
+  assumptionCount: number;
   detail: boolean;
   onDetail: (on: boolean) => void;
+  showDetail: boolean;
 }) {
   const counts: Record<Tab, string> = {
     summary: "",
-    model: `${model.assumptions.filter((a) => a.editable).length} assumptions`,
+    model: `${assumptionCount} assumptions`,
     audit: `${model.warnings.length} items`,
   };
   return (
@@ -146,7 +191,7 @@ function TabBar({
           {counts[t] && <span className="n">{counts[t]}</span>}
         </button>
       ))}
-      {tab === "summary" && (
+      {tab === "summary" && showDetail && (
         <button
           type="button"
           className="detail-toggle"
@@ -244,6 +289,7 @@ export function Company({ ticker }: { ticker: string }) {
   const [overrideError, setOverrideError] = useState<string | null>(null);
   const [presets, setPresets] = useState<PresetInfo[]>([]);
   const [tab, setTabState] = useState<Tab>(tabFromUrl);
+  const [view, setViewState] = useState<View>(viewFromUrl);
   const [detail, setDetailState] = useState(storedDetail);
   const lastGood = useRef<{ preset: string | null; overrides: Overrides }>({
     preset: null,
@@ -255,6 +301,10 @@ export function Company({ ticker }: { ticker: string }) {
   const setTab = (t: Tab) => {
     setTabState(t);
     setUrlParam("tab", t === "summary" ? null : t);
+  };
+  const setView = (v: View) => {
+    setViewState(v);
+    setUrlParam("view", v === "dcf" ? null : v);
   };
   const setDetail = (on: boolean) => {
     setDetailState(on);
@@ -495,6 +545,15 @@ export function Company({ ticker }: { ticker: string }) {
     gordonM && !gordonM.available ? gordonM.reason.message : null;
   const company = model.company.short_name || model.company.name;
 
+  /* the EPV view's assumption surface — the server's tested field list,
+     never a frontend opinion about what EPV consumes */
+  const epvFields = new Set(
+    model.families.find((f) => f.id === "epv")?.fields ?? [],
+  );
+  const epvRows = model.assumptions.filter((r) => epvFields.has(r.name));
+  const assumptionCount = (view === "epv" ? epvRows : model.assumptions)
+    .filter((a) => a.editable).length;
+
   const modelDensity = (
     <>
       <div className="cols">
@@ -521,17 +580,62 @@ export function Company({ ticker }: { ticker: string }) {
   return (
     <div className="shell">
       <div className="board">
-        <Header ticker={ticker} model={model} />
+        <Header ticker={ticker} model={model} view={view} />
+        <ViewSwitch families={model.families} view={view} onView={setView} />
         <TabBar
           tab={tab}
           onTab={setTab}
           model={model}
+          assumptionCount={assumptionCount}
           detail={detail}
           onDetail={setDetail}
+          showDetail={view === "dcf"}
         />
         <div className={`busybar${busy ? " on" : ""}`} />
 
-        {tab === "summary" && (
+        {tab === "summary" && view === "epv" && (
+          <>
+            <EpvHero model={model} />
+            <CheckBand checks={model.checks} />
+            <div className="verdict">
+              <div className="kicker">Verdict</div>
+              <p>{model.epv_verdict.text}</p>
+            </div>
+            {model.growth && (
+              <div className="verdict growthline">
+                <div className="kicker">Value of growth</div>
+                <p>
+                  {model.growth.epv_text}{" "}
+                  <button
+                    type="button"
+                    className="viewlink"
+                    onClick={() => setView("dcf")}
+                  >
+                    See the DCF view →
+                  </button>
+                </p>
+              </div>
+            )}
+            <SummaryCaveats
+              digest={model.warnings_digest}
+              warnings={model.warnings}
+              checks={model.checks}
+            />
+            <div className="prov">
+              <span className="glyph" aria-hidden>
+                ■
+              </span>
+              <span>
+                The normalized margin is derived from {company}&rsquo;s own
+                filings by the rule its profile selects — and editable in
+                Model, like everything else.
+              </span>
+            </div>
+            <Actions ticker={ticker} model={model} />
+          </>
+        )}
+
+        {tab === "summary" && view === "dcf" && (
           <>
             <Hero model={model} />
             <CheckBand checks={model.checks} />
@@ -542,7 +646,16 @@ export function Company({ ticker }: { ticker: string }) {
             {model.growth && (
               <div className="verdict growthline">
                 <div className="kicker">Value of growth</div>
-                <p>{model.growth.text}</p>
+                <p>
+                  {model.growth.text}{" "}
+                  <button
+                    type="button"
+                    className="viewlink"
+                    onClick={() => setView("epv")}
+                  >
+                    See the earnings-power view →
+                  </button>
+                </p>
               </div>
             )}
             {curve ? (
@@ -596,7 +709,43 @@ export function Company({ ticker }: { ticker: string }) {
           </>
         )}
 
-        {tab === "model" && (
+        {tab === "model" && view === "epv" && (
+          <>
+            <CheckBand checks={model.checks} />
+            {model.profile && (
+              <ProfileBand
+                profile={model.profile}
+                requested={profileTag}
+                onReassign={(tag) => {
+                  setOverrideError(null);
+                  setProfileTag(tag);
+                }}
+              />
+            )}
+            <div className="cols">
+              <div className="amain">
+                <Assumptions
+                  rows={epvRows}
+                  overrideCount={
+                    Object.keys(overrides).filter((k) => epvFields.has(k))
+                      .length
+                  }
+                  overrideError={overrideError}
+                  presetNotes={presetNotes}
+                  onOverride={onOverride}
+                  onResetAll={() => {
+                    setOverrideError(null);
+                    setOverrides({});
+                  }}
+                />
+                <Caveats warnings={model.warnings} checks={model.checks} />
+                <Actions ticker={ticker} model={model} />
+              </div>
+            </div>
+          </>
+        )}
+
+        {tab === "model" && view === "dcf" && (
           <>
             <CheckBand checks={model.checks} />
             {model.profile && (

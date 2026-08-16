@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { modelOk, warning } from "../test-fixtures";
 import { Caveats } from "./Caveats";
+import { EpvHero } from "./EpvHero";
 import { Hero } from "./Hero";
 import { StateCard } from "./StateCard";
 
@@ -17,6 +18,7 @@ describe("hero legs", () => {
     m.valuation[i] = {
       id: "exit_multiple",
       label: "DCF — exit multiple",
+      family: "dcf",
       note: "",
       available: false,
       reason: {
@@ -30,11 +32,22 @@ describe("hero legs", () => {
     expect(screen.getByText("280.99")).toBeTruthy();
   });
 
-  it("renders every registry method as a bar — EPV rides along", () => {
+  it("keeps the families separate: no EPV bar in the DCF hero", () => {
     render(<Hero model={modelOk()} />);
+    expect(screen.getByText("280.99")).toBeTruthy();
+    expect(screen.queryByText("171.22")).toBeNull();
+    expect(screen.queryByText("Earnings power (no growth)")).toBeNull();
+  });
+
+  it("renders the EPV hero from its own family — margin, value, price", () => {
+    render(<EpvHero model={modelOk()} />);
     expect(screen.getByText("171.22")).toBeTruthy();
     expect(screen.getByText("Earnings power (no growth)")).toBeTruthy();
     expect(screen.getByText("−65.6%")).toBeTruthy();
+    expect(screen.getByText(/normalized operating margin/)).toBeTruthy();
+    // no DCF concepts leak in
+    expect(screen.queryByText("280.99")).toBeNull();
+    expect(screen.queryByText(/perpetuity/)).toBeNull();
   });
 
   it("shows the implied-growth gap when the solve exists", () => {

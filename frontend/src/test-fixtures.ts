@@ -157,6 +157,7 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
       {
         id: "gordon",
         label: "DCF — Gordon perpetuity",
+        family: "dcf",
         note: "grows explicit-year cash flows into a perpetuity",
         available: true,
         value_per_share: 280.99,
@@ -172,6 +173,7 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
       {
         id: "exit_multiple",
         label: "DCF — exit multiple",
+        family: "dcf",
         note: "prices the terminal year the way the market prices today",
         available: true,
         value_per_share: 606.28,
@@ -189,6 +191,7 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
       {
         id: "epv",
         label: "Earnings power (no growth)",
+        family: "epv",
         note: "normalized operating profit, taxed, capitalized at WACC",
         available: true,
         value_per_share: 171.22,
@@ -202,6 +205,16 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
         bridge: [],
       },
     ],
+    families: [
+      { id: "dcf", label: "DCF", blurb: "value the projected future",
+        fields: null },
+      { id: "epv", label: "Earnings power",
+        blurb: "value today's profits at zero growth",
+        fields: ["epv_margin", "marginal_tax", "midyear", "beta",
+                 "beta_adjusted", "erp", "risk_free", "coverage_ratio",
+                 "kd_synthetic", "embedded_debt_rate", "share_count",
+                 "cash_floor_pct"] },
+    ],
     growth: {
       available: true,
       state: "positive",
@@ -210,6 +223,15 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
       text:
         "Growth is worth $310 a share here — 64% of the DCF value rests " +
         "on growth beyond today's earnings power.",
+      epv_text:
+        "The DCF view prices growth at $310 a share on top of this " +
+        "no-growth value.",
+    },
+    epv_verdict: {
+      text:
+        "On today's demonstrated earnings power alone — no growth — " +
+        "Microsoft is worth $171 a share, 66% below its $498 price.",
+      state: "ok",
     },
     wacc: { wacc: 0.0998, beta_used: 1.07 },
     crosschecks: {},

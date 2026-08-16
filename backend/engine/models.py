@@ -178,6 +178,7 @@ class MethodResult:
     id: str                               # gordon | exit_multiple | epv — stable
     label: str
     order: int
+    family: str                           # dcf | epv — the view a method belongs to
     availability: MethodAvailability
     note: str = ""                        # one-line method framing for the reader
     enterprise_value: float | None = None

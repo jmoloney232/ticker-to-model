@@ -56,7 +56,9 @@ function MethodCap({ mo }: { mo: MethodOut }) {
 
 export function Hero({ model }: { model: ModelOk }) {
   const price = model.market.price.value;
-  const methods = model.valuation; // server-ordered registry
+  // the DCF view's hero: its own family only, server-ordered (the EPV
+  // family renders in EpvHero — owner spec 2026-08-16, clean separation)
+  const methods = model.valuation.filter((mo) => mo.family === "dcf");
   const gordon = findMethod(methods, "gordon");
   const exit = findMethod(methods, "exit_multiple");
   const solve = model.reverse?.terminal_growth ?? null;

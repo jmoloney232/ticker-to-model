@@ -38,7 +38,16 @@ enterprise_value, equity_value, detail: [{key, label, unit, value}], bridge[]}`
 **or** `{id, label, note, available: false, reason: {code, message, detail}}` —
 the UI iterates and never names legs in rendering code ·
 `growth`: `{available, state: positive|value_destructive|unavailable, per_share,
-share_of_dcf, text}` — the server-written value-of-growth sentence ·
+share_of_dcf, text, epv_text}` — the server-written value-of-growth sentence,
+phrased once per view (owner spec 2026-08-16) ·
+`families`: `[{id: dcf|epv, label, blurb, fields}]` — the view selector's
+content, server-owned; `fields` is the EPV view's exact assumption surface
+(perturbation-tested against the engine), `null` = full surface. The user picks
+the view on the landing page or the in-page switcher; `?view=epv` carries it in
+links, absent = DCF. The EPV view renders only its family's methods, its own
+`epv_verdict` (states ok | negative_equity | no_epv), and the filtered Model
+tab; DCF machinery (slider, drivers, grids, projections, presets) stays in the
+DCF view ·
 `wacc` (full build-up) · `ufcf` · `projections` · `crosschecks` · `sensitivity`
 (grids, null cells for g ≥ WACC) · `checks` (P1–P8) · `warnings` **structured**
 `[{origin, code, message, fiscal_year, item, detail}]` — every inherited stream,

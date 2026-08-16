@@ -5,9 +5,10 @@ const EXAMPLES = ["MSFT", "KO", "COST", "KHC", "MCD"];
 
 export function Home() {
   const [t, setT] = useState("");
-  const go = (ticker: string) => {
+  const go = (ticker: string, view: "dcf" | "epv" = "dcf") => {
     const clean = ticker.trim().toUpperCase();
-    if (clean) navigate(`/company/${clean}`);
+    if (clean)
+      navigate(`/company/${clean}${view === "epv" ? "?view=epv" : ""}`);
   };
   return (
     <div className="shell">
@@ -15,13 +16,15 @@ export function Home() {
         <span className="regmark tl" />
         <span className="regmark br" />
         <div className="kicker">Ticker to Model</div>
-        <h1>DCF from the filings up</h1>
+        <h1>Valuation from the filings up</h1>
         <p className="pitch">
-          Enter a US ticker. The model is built from the company&rsquo;s own
-          10-Ks — every assumption derived by a documented rule, every one
-          editable, and the whole thing downloadable as an Excel workbook with
-          live formulas. Banks, insurers, and REITs are declined honestly
-          rather than modeled badly.
+          Enter a US ticker and pick your question. <strong>DCF</strong>{" "}
+          values the projected future; <strong>earnings power</strong> values
+          today&rsquo;s profits at zero growth. Both are built from the
+          company&rsquo;s own 10-Ks — every assumption derived by a documented
+          rule, every one editable, the whole thing downloadable as one Excel
+          workbook with live formulas. Banks, insurers, and REITs are declined
+          honestly rather than modeled badly.
         </p>
         <form
           onSubmit={(e) => {
@@ -38,11 +41,18 @@ export function Home() {
           />
           <span className="dl">
             <button type="submit" className="dl-btn">
-              Build the model
+              Build the DCF
             </button>
             <span className="regmark tl" />
             <span className="regmark br" />
           </span>
+          <button
+            type="button"
+            className="dl-alt"
+            onClick={() => go(t, "epv")}
+          >
+            Value its earnings power
+          </button>
         </form>
         <div className="examples">
           <span>Try:</span>

@@ -71,6 +71,13 @@ Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
   (D&A cancels). Value of growth = Gordon − EPV (Gordon comparator only);
   EPV > DCF is a labeled value-destructive state, never a negative number.
   Property-tested: g=0 DCF converges to EPV at rel 1e-9.
+- **DCF/EPV view split (owner, 2026-08-16):** the user selects a view at the
+  start (landing buttons; in-page switcher; `?view=epv` in links, absent =
+  DCF). Views are server-owned method families; the EPV view exposes ONLY
+  the assumptions EPV consumes (`EPV_FIELDS` in engine/dcf.py — perturbation-
+  tested exact), its own server-written verdict, and the growth line phrased
+  per view. DCF machinery (slider, drivers, grids, projections, presets)
+  never renders in the EPV view. The workbook is never split.
 
 ## Architecture
 

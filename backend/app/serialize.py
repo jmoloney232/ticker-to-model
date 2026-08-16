@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 
 from engine.assumptions import DISPLAY_ONLY
+from engine.dcf import FAMILIES
 from engine.models import Bridge, MethodResult, ModelResult
 from engine.presets import Preset, encode_assumption_set
 from engine.reverse import ImpliedResult
@@ -251,7 +252,8 @@ def method_out(mr: MethodResult, price: float) -> dict:
     """One registry entry → one JSON object. Deliberately generic: no method
     ids appear here, so adding a fourth method never touches this function
     (contract-tested with a stub method)."""
-    base = {"id": mr.id, "label": mr.label, "note": mr.note}
+    base = {"id": mr.id, "label": mr.label, "family": mr.family,
+            "note": mr.note}
     if not mr.availability.available:
         # honest unavailable state, reason attached (owner rule: data, not error)
         base.update({
@@ -283,25 +285,60 @@ def _mdetail(method: dict, key: str) -> float | None:
 
 
 def growth_out(m: ModelResult) -> dict:
-    """The DCF − EPV comparison, with the server-written sentence. The
-    inverted case is a labeled state, never a negative 'value of growth'."""
+    """The DCF − EPV comparison, with the server-written sentences — one per
+    view, since the same number reads differently from each side (owner spec
+    2026-08-16). The inverted case is a labeled state, never a negative
+    'value of growth'."""
     g = m.growth
     if not g.available:
         return {"available": False, "state": "unavailable",
                 "reason": {"code": g.reason_code, "message": g.reason},
-                "text": g.reason}
+                "text": g.reason, "epv_text": g.reason}
     if g.state == "value_destructive":
         text = ("Earnings power alone is worth more than the DCF: the "
                 "projected path earns less than holding today's profits "
                 "flat, so growth at these assumptions destroys value — "
                 "returns below the cost of capital, or shrinkage.")
+        epv_text = ("The DCF view comes out BELOW this number: the projected "
+                    "path is worth less than holding today's profits flat — "
+                    "at these assumptions, growth destroys value.")
     else:
         share = (f" — {g.share_of_dcf:.0%} of the DCF value rests on growth"
                  f" beyond today's earnings power" if g.share_of_dcf is not None
                  else "")
         text = f"Growth is worth {_dollars(g.per_share)} a share here{share}."
+        epv_text = (f"The DCF view prices growth at {_dollars(g.per_share)} "
+                    "a share on top of this no-growth value.")
     return {"available": True, "state": g.state, "per_share": g.per_share,
-            "share_of_dcf": g.share_of_dcf, "text": text}
+            "share_of_dcf": g.share_of_dcf, "text": text,
+            "epv_text": epv_text}
+
+
+def epv_verdict_text(company_name: str, epv: dict, price: float) -> dict:
+    """The EPV view's own verdict sentence — one variant per state the
+    method can be in, written here so it is versioned and testable."""
+    name = short_name(company_name)
+    p = _dollars(price)
+    if not epv["available"]:
+        return {"text": (f"A no-growth value isn't defined for {name}: its "
+                         "normalized operating margin is negative, so there "
+                         "is no earnings power to capitalize. The DCF view — "
+                         "which can price a projected recovery — remains "
+                         "available."),
+                "state": "no_epv"}
+    v = epv["value_per_share"]
+    if v <= 0:
+        return {"text": (f"Today's earnings power doesn't cover {name}'s net "
+                         "obligations — at zero growth, enterprise value "
+                         "falls short of debt, leaving nothing for "
+                         f"shareholders. The market's {p} is pricing growth "
+                         "this view deliberately excludes."),
+                "state": "negative_equity"}
+    side = "below" if epv["vs_price"] < 0 else "above"
+    return {"text": (f"On today's demonstrated earnings power alone — no "
+                     f"growth — {name} is worth {_dollars(v)} a share, "
+                     f"{_gap(epv['vs_price'])} {side} its {p} price."),
+            "state": "ok"}
 
 
 def curves_out(m: ModelResult, reverse_dict: dict | None) -> dict:
@@ -579,7 +616,9 @@ def serialize_model(m: ModelResult, preset: Preset | None,
         "curves": curves_out(m, reverse_dict),
         "drivers": drivers_out(m),
         "valuation": methods,
+        "families": [dict(f) for f in FAMILIES],
         "growth": growth_out(m),
+        "epv_verdict": epv_verdict_text(h.company.name, by_id["epv"], price),
         "wacc": dataclasses.asdict(m.wacc),
         "ufcf": [dataclasses.asdict(y) for y in m.ufcf],
         "projections": [{"fiscal_year": p.fiscal_year, "fye": p.fye.isoformat(),
