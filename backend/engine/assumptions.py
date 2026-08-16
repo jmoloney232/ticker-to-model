@@ -393,12 +393,6 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs,
         "universe carry an actual agency rating the engine does not yet "
         "ingest (see known-limitations)", unit="flag")
     add("beta_adjusted", True, "Blume adjustment on (⅔β + ⅓)", unit="flag")
-    add("fade_curved", False,
-        "Growth fade shape. OFF: linear from FY1 growth to terminal g. ON: "
-        "half-cosine — front-loaded persistence (a durable franchise keeps "
-        "its growth premium in the near years) with a smooth landing into "
-        "the perpetuity, no free parameter. Set ON by the compounder "
-        "profile; editable", unit="flag")
     add("capex_fade", False,
         "OFF: capex held at the trailing rate all forecast years. ON: capex "
         "% of revenue fades linearly to the maintenance level "
@@ -512,9 +506,6 @@ def _apply_profile(a: Assumptions, prof, history: FinancialHistory,
                     f"{(m.roic_median or 0) - m.wacc:+.1%}) — a 5-year window "
                     "forces convergence a compounder hasn't shown; horizon "
                     "extended to 10")
-        set_default("fade_curved", True,
-                    "Profile: half-cosine fade — front-loaded growth "
-                    "persistence, smooth landing into the perpetuity")
         set_default("terminal_growth", rf,
                     f"Profile: default at the published g ≤ 10Y ceiling "
                     f"({rf:.2%}) — durable compounding priced at the "

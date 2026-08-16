@@ -137,7 +137,6 @@ class TestFixtures:
         _, _, a = fixture_assumptions("MSFT")
         assert a.profile.tag == "compounder+reinvestment_heavy"
         assert a.eff("forecast_years") == 10
-        assert a.eff("fade_curved") is True
         assert a.eff("capex_fade") is True
         # g default at the 10Y ceiling, provenance discloses the profile
         f = a.fields["terminal_growth"]
@@ -157,9 +156,8 @@ class TestFixtures:
         _, _, a = fixture_assumptions("KO")
         assert a.profile.primary == "mature"
         assert "reinvestment_heavy" in a.profile.modifiers
-        # mature: horizon and fade stay at today's defaults
+        # mature: horizon stays at today's default
         assert a.eff("forecast_years") == 5
-        assert a.eff("fade_curved") is False
 
     def test_wacc_is_structurally_untouchable(self):
         # the invariant the spec demands: profile application cannot move
@@ -181,17 +179,19 @@ class TestFixtures:
 
 
 class TestFadeMechanics:
-    def test_cosine_endpoints_exact_and_front_loaded(self):
-        _, _, a = fixture_assumptions("MSFT")
+    def test_growth_fade_is_linear_for_every_profile(self):
+        # The half-cosine compounder fade was REMOVED 2026-08-16 (owner
+        # decision): the decomposition audit priced it at ≤ $2/share across
+        # the whole cohort. One shape, endpoints exact, constant steps.
+        _, _, a = fixture_assumptions("MSFT")     # compounder — no exception
         n = a.eff("forecast_years")
         path = growth_path(a)
         g1, gt = a.eff("revenue_growth_fy1"), a.eff("terminal_growth")
         assert len(path) == n
         assert path[0] == pytest.approx(g1) and path[-1] == pytest.approx(gt)
-        assert all(x >= y - 1e-12 for x, y in zip(path, path[1:], strict=False))
-        # front-loaded persistence: year 2 holds above the linear fade
-        linear_y2 = g1 + 1 / (n - 1) * (gt - g1)
-        assert path[1] > linear_y2
+        steps = [y - x for x, y in zip(path, path[1:], strict=False)]
+        assert all(s == pytest.approx(steps[0]) for s in steps)
+        assert not a.has("fade_curved")           # the flag is gone, not off
 
     def test_capex_fades_to_maintenance(self):
         _, _, a = fixture_assumptions("MSFT")

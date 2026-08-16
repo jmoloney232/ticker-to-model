@@ -95,8 +95,10 @@ two independent implementations agree at the same conventions. The entire
 remaining gap is the compounder profile's two levers, both disclosed on the
 methodology page: terminal growth at the 10Y instead of the house cap
 (+$118/share alone) and the 10-year horizon (+$61 alone; $502 with both and
-their interaction). The half-cosine fade shape contributes ~$1 — its
-justification is kink-free structure, not magnitude. The terminal-growth
+their interaction). The half-cosine fade shape contributed ~$1 — its
+justification was kink-free structure, not magnitude, and on that evidence
+it was removed entirely on 2026-08-16 (the compounder profile now has
+exactly two levers). The terminal-growth
 lever's impact scales with 1/(WACC − g), so it is largest exactly for
 low-WACC compounders; this is the aggressive edge of a published constraint
 (g ≤ 10Y, Damodaran), applied at the boundary for filers whose history

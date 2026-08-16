@@ -42,18 +42,15 @@ def horizon(assumptions: Assumptions) -> int:
 
 
 def growth_path(assumptions: Assumptions) -> list[float]:
-    """FY1 growth fading to terminal g by the final forecast year. Linear by
-    default; half-cosine when fade_curved is on (compounder profile) —
-    g_i = g_t + (g_1 − g_t)·(1 + cos(π·i/(n−1)))/2 — front-loaded
-    persistence with zero slope at both ends, so the near years hold the
-    observed growth and the path lands in the perpetuity without a kink.
-    No free parameter (nothing to tune toward market — owner rule)."""
+    """FY1 growth fading LINEARLY to terminal g by the final forecast year.
+    A half-cosine variant (compounder profile, fade_curved) existed until
+    2026-08-16; the decomposition audit measured it at ≤ $2/share across
+    the entire compounder cohort — a shape earning no economic payload is
+    complexity inviting "why is this here?", so the owner had it removed
+    (methodology: growth_fade_shape)."""
     g1 = assumptions.eff("revenue_growth_fy1")
     gt = assumptions.eff("terminal_growth")
     n = horizon(assumptions)
-    if assumptions.has("fade_curved") and assumptions.eff("fade_curved"):
-        return [gt + (g1 - gt) * (1 + math.cos(math.pi * i / (n - 1))) / 2
-                for i in range(n)]
     return [g1 + i / (n - 1) * (gt - g1) for i in range(n)]
 
 

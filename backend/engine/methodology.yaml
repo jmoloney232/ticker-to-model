@@ -600,9 +600,10 @@ conventions:
       capex/D&A between 1.5× (the reinvestment_fade_mismatch trigger — same
       published constant) and 4× (above which the D&A base is treated as
       unreliable and the modifier is withheld, disclosed). A profile may set
-      only: forecast horizon, growth fade shape, terminal growth default,
-      margin normalization, capex normalization. Never WACC components, the
-      bridge, or validation thresholds.
+      only: forecast horizon, terminal growth default, margin normalization,
+      capex normalization. Never WACC components, the bridge, or validation
+      thresholds. (Growth fade shape left this list 2026-08-16 — see
+      growth_fade_shape.)
     editable: true
     tradeoff: >
       Thresholds are set from what the categories mean, never from fit
@@ -617,21 +618,24 @@ conventions:
   - id: growth_fade_shape
     label: Growth fade shape
     category: assumptions
-    default: "Linear fade from FY1 growth to terminal g (mature, declining); half-cosine fade for compounders — g_i = g_t + (g_1 − g_t)·(1 + cos(π·i/(n−1)))/2"
+    default: "Linear fade from FY1 growth to terminal g, every profile"
     derivation: >
-      The half-cosine holds growth near the observed rate in the early years
-      (zero slope at entry — a durable franchise does not surrender a third
-      of its growth premium in year two) and lands in the perpetuity with
-      zero slope (no kink at the terminal handoff, so the anchor year is not
-      a path artifact). It has no free parameter — nothing to tune toward
-      market — and writes directly as a live Excel formula.
-    editable: true
+      One shape, no shape parameter. A half-cosine variant for compounders
+      (front-loaded persistence, kink-free landing) existed until 2026-08-16;
+      the profile decomposition audit measured its worth at ≤ $2/share across
+      the entire compounder cohort — roughly $1 on most names — so it was
+      removed by owner decision: a rule that earns no economic payload is
+      complexity sitting in the codebase inviting "why is this here?". The
+      compounder profile now differs from the base conventions by exactly
+      two disclosed levers: the 10-year horizon and terminal g at the 10Y
+      ceiling.
+    editable: false
     tradeoff: >
-      The linear fade understates the near years and overstates how quickly
-      a durable franchise decays; the cosine's cost is faster mid-late decay,
-      which is the honest counterpart of front-loaded persistence. A
-      power-family fade with a shape exponent was rejected because the
-      exponent would be a tunable free parameter.
+      The linear fade understates the near years for a durable franchise and
+      hands into the perpetuity with a slope kink; both effects were measured
+      and are worth ~$1/share. A power-family fade with a shape exponent was
+      rejected because the exponent would be a tunable free parameter — the
+      same reasoning that removed the cosine cuts against replacing it.
 
   - id: capex_normalization
     label: Capex normalization (reinvestment-heavy)

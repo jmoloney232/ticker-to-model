@@ -119,7 +119,7 @@ ASSUMPTION_GROUPS = [
     ("Exit & bridge", ["exit_multiple", "share_count", "cash_floor_pct"]),
     ("Earnings power (EPV)", ["epv_margin"]),
     ("Toggles", ["midyear", "sbc_addback", "kd_synthetic", "beta_adjusted",
-                 "terminal_roic_fade", "fade_curved", "capex_fade"]),
+                 "terminal_roic_fade", "capex_fade"]),
 ]
 
 
@@ -434,16 +434,13 @@ class _Writer:
         r = 4
         self._header(ws, r, "DRIVERS", span=2 + self.horizon)
         r += 1
-        # Fade shape is LIVE: linear, or half-cosine when fade_curved is on
-        # (compounder profile) — same closed form as engine growth_path
+        # Linear fade — LIVE off the named growth/terminal cells (the
+        # half-cosine variant was removed 2026-08-16: ≤ $2/share everywhere)
         n1 = self.horizon - 1
         r = self._mrow(ws, r, "Revenue growth (fade to terminal g)", "growth",
                        None, lambda i: (
-                           f"=IF(fade_curved,terminal_growth+"
-                           f"(revenue_growth_fy1-terminal_growth)*"
-                           f"(1+COS(PI()*{i - 1}/{n1}))/2,"
-                           f"revenue_growth_fy1+{i - 1}/{n1}*"
-                           f"(terminal_growth-revenue_growth_fy1))"), FMT_PCT)
+                           f"=revenue_growth_fy1+{i - 1}/{n1}*"
+                           f"(terminal_growth-revenue_growth_fy1)"), FMT_PCT)
         r = self._mrow(ws, r, "Tax rate (effective → marginal fade)", "tax_rate",
                        None, lambda i: f"=effective_tax_fy1+{i - 1}/"
                                        f"{self.horizon - 1}*(marginal_tax"
@@ -1214,14 +1211,11 @@ class _Writer:
             for i in range(1, self.horizon + 1):
                 col = self._mcol(i)
                 prev = self._mcol(i - 1)
-                # same live fade-shape branch as the Model sheet, at this
-                # column's g (the grid re-projects per column, cosine included)
+                # same linear fade as the Model sheet, at this column's g
+                # (the grid re-projects per column)
                 ws.cell(row=rows["growth"], column=2 + i,
-                        value=(f"=IF(fade_curved,{g}+"
-                               f"(revenue_growth_fy1-{g})*"
-                               f"(1+COS(PI()*{i - 1}/{self.horizon - 1}))/2,"
-                               f"revenue_growth_fy1+{i - 1}/"
-                               f"{self.horizon - 1}*({g}-revenue_growth_fy1))")
+                        value=(f"=revenue_growth_fy1+{i - 1}/"
+                               f"{self.horizon - 1}*({g}-revenue_growth_fy1)")
                         ).number_format = FMT_PCT
                 rev_prev = (f"Model!$B${R['revenue']}" if i == 1
                             else f"{prev}{rows['rev']}")
