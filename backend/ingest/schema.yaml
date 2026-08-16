@@ -172,6 +172,11 @@ items:
     tags:
       - NetIncomeLoss
       - ProfitLoss
+      - NetIncomeLossAvailableToCommonStockholdersBasic   # BKNG (verified
+        # FY2023/24/25: $4.29B/$5.88B/$5.40B — files neither broader tag).
+        # POST-PREFERRED basis: identical to NI when no preferred exists;
+        # ni_post_preferred_basis warns when preferred equity is nonzero
+        # (owner-approved chain add 2026-08-16)
     notes: "ProfitLoss includes noncontrolling interests — when it is the source, subtract nci_income (H3 checks consistency)."
 
   - name: nci_income
@@ -179,8 +184,9 @@ items:
     statement: income
     shape: duration
     required: false
-    missing_rule: zero_logged
+    missing_rule: derive
     tags: [NetIncomeLossAttributableToNoncontrollingInterest]
+    derive: "ProfitLoss - NetIncomeLoss when both are filed and differ — the identity defines NCI income for filers that never tag it (ORCL, $222M FY2026 — verified; nci_income_derived warns; owner-approved 2026-08-16)"
 
   - name: eps_basic
     label: EPS, basic
@@ -267,7 +273,11 @@ items:
     shape: instant
     required: false
     missing_rule: zero_logged
-    tags: [InventoryNet]
+    tags:
+      - InventoryNet
+      - InventoryFinishedGoodsNetOfReserves   # NKE (verified FY2026: $7.50B —
+        # finished-goods-only filers never tag InventoryNet;
+        # owner-approved 2026-08-16)
 
   - name: other_current_assets
     label: Other current assets
@@ -275,7 +285,10 @@ items:
     shape: instant
     required: false
     missing_rule: derive
-    tags: [OtherAssetsCurrent]
+    tags:
+      - OtherAssetsCurrent
+      - PrepaidExpenseAndOtherAssetsCurrent   # NKE (verified FY2026: $2.14B —
+        # combined prepaid+other line; owner-approved 2026-08-16)
     derive: "residual: total_current_assets - (cash + ST investments + AR + inventory)"
 
   - name: total_current_assets
@@ -361,7 +374,12 @@ items:
     shape: instant
     required: false
     missing_rule: derive
-    tags: [OtherAssetsNoncurrent]
+    tags:
+      - OtherAssetsNoncurrent
+      - DeferredIncomeTaxesAndOtherAssetsNoncurrent   # NKE (verified FY2026:
+        # $5.67B — combined DTA+other line; no separate deferred-tax-asset
+        # item exists in this schema, so no double count;
+        # owner-approved 2026-08-16)
     derive: "residual: total_assets - total_current_assets - (PP&E + goodwill + intangibles + LT investments + ROU asset)"
 
   - name: total_assets
@@ -483,7 +501,12 @@ items:
     shape: instant
     required: false
     missing_rule: derive
-    tags: [OtherLiabilitiesNoncurrent]
+    tags:
+      - OtherLiabilitiesNoncurrent
+      - DeferredIncomeTaxesAndOtherLiabilitiesNoncurrent   # NKE (verified
+        # FY2026: $2.44B — combined DTL+other line; the combined_dtl_other
+        # adjust() fold zeroes the separately-mapped deferred_tax_liabilities
+        # to avoid double counting; owner-approved 2026-08-16)
     derive: "residual: total_liabilities - total_current_liabilities - (LTD + op lease liab + DTL + pension)"
 
   - name: total_liabilities
@@ -532,7 +555,10 @@ items:
     shape: instant
     required: false
     missing_rule: zero_logged
-    tags: [MinorityInterest]
+    tags:
+      - MinorityInterest
+      - NonredeemableNoncontrollingInterest   # UBER (verified FY2024/25:
+        # $825M/$877M — closes its H1 gap exactly; owner-approved 2026-08-16)
     notes: "Book value; subtracted in the EV→equity bridge (disclosed proxy for fair value)."
 
   - name: retained_earnings
@@ -632,6 +658,9 @@ items:
       - PaymentsToAcquireOtherProductiveAssets   # VZ FY2019+ (verified $17.0B
         # FY2025; VZ filed PaymentsToAcquireProductiveAssets only through 2018,
         # so its recent years resolve here — owner-approved chain add)
+      - PaymentsToAcquireOtherPropertyPlantAndEquipment   # LLY (verified
+        # FY2023/24/25: $3.45B/$5.06B/$7.84B — matches its PP&E buildout;
+        # owner-approved chain add 2026-08-16)
     notes: "Positive outflow per sign_conventions."
 
   - name: acquisitions

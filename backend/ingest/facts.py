@@ -43,6 +43,7 @@ class Selected:
     first_filed_value: float
     was_restated: bool
     restatement_delta_pct: float | None
+    sign_flip_suspected: bool = False
 
 
 def _parse_date(s: str) -> date:
@@ -91,9 +92,22 @@ def annual_instants(payload: dict, ns: str, tag: str, unit: str) -> list[RawFact
 
 
 def _resolve_group(group: list[RawFact]) -> Selected:
-    """Latest (filed, accession) wins; first filed kept for the restatement delta."""
+    """Latest (filed, accession) wins; first filed kept for the restatement delta.
+
+    Sign-flip guard (owner-approved 2026-08-16): when a later accession
+    re-reports the same period with EXACTLY the negated value, that is a
+    tagging error, not a restatement — a genuine restatement changes the
+    magnitude. Keep the originally-filed sign and flag it (AMD's FY2023 10-K
+    re-reports FY2021 CFI/CFF sign-flipped — verified; H2 caught it)."""
     first = min(group, key=lambda f: (f.filed, f.accession))
     chosen = max(group, key=lambda f: (f.filed, f.accession))
+    if (chosen.value == -first.value and chosen.value != 0
+            and chosen.accession != first.accession):
+        return Selected(
+            value=first.value, unit=first.unit, start=first.start,
+            end=first.end, accession=first.accession, filed=first.filed,
+            first_filed_value=first.value, was_restated=False,
+            restatement_delta_pct=None, sign_flip_suspected=True)
     delta = None
     restated = False
     if chosen.value != first.value:

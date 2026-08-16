@@ -185,6 +185,34 @@ def _d_other_nonoperating(c: _Ctx):
         return None
     return pretax - oi + c.val0("interest_expense") - c.val0("interest_income")
 
+def _d_nci_income(c: _Ctx):
+    # ORCL (verified FY2026, $222M): files NetIncomeLoss and ProfitLoss
+    # differing by NCI income but never tags the NCI line itself — the
+    # identity defines it. Mirrors the derived-EBIT precedent: derived
+    # loudly, never silently (owner-approved 2026-08-16).
+    pl = c.raw_duration("ProfitLoss")
+    ni = c.raw_duration("NetIncomeLoss")
+    if pl is None or ni is None or pl == ni:
+        return None
+    # Guard: only with balance-sheet evidence that NCI exists (an NCI balance,
+    # or equity sourced from the including-NCI tag). A bare PL != NI
+    # disagreement with no NCI anywhere is an inconsistency H3 must still
+    # catch — the deriver must not explain it away.
+    nci_bal = c.fact("noncontrolling_interest")
+    se = c.fact("stockholders_equity")
+    evidence = ((nci_bal is not None and nci_bal.source == "tag"
+                 and nci_bal.value != 0)
+                or (se is not None and se.tag.endswith(
+                    "IncludingPortionAttributableToNoncontrollingInterest")))
+    if not evidence:
+        return None
+    c.warn("nci_income_derived",
+           f"FY{c.fy}: NCI income derived as ProfitLoss - NetIncomeLoss = "
+           f"{pl - ni:,.0f} — the filer tags no NCI income line.",
+           item="nci_income")
+    return pl - ni
+
+
 def _d_short_term_debt(c: _Ctx):
     stb = c.raw_instant("ShortTermBorrowings")
     cp = c.raw_instant("CommercialPaper")
@@ -291,6 +319,7 @@ def _d_net_change_in_cash(c: _Ctx):
 
 DERIVERS: list[tuple[str, callable]] = [
     ("shares_diluted_wa", _d_shares_diluted_wa),
+    ("nci_income", _d_nci_income),
     ("operating_income", _d_operating_income),
     ("gross_profit", _d_gross_profit),
     ("selling_general_admin", _d_selling_general_admin),
@@ -414,6 +443,7 @@ class _Mapper:
             first_filed_value=s.first_filed_value,
             was_restated=s.was_restated,
             restatement_delta_pct=s.restatement_delta_pct,
+            sign_flip_suspected=s.sign_flip_suspected,
         )
 
     def map_items(self, run: list[int]) -> None:
@@ -472,6 +502,32 @@ class _Mapper:
                              f"FY{fy}: stockholders_equity sourced from the including-NCI "
                              "tag with no NCI tag to subtract.",
                              item="stockholders_equity")
+
+            ni2 = v.get("net_income")
+            if (ni2 is not None and ni2.tag.endswith(
+                    "NetIncomeLossAvailableToCommonStockholdersBasic")):
+                pref = v.get("preferred_equity")
+                if pref is not None and pref.value != 0:
+                    ctx.warn("ni_post_preferred_basis",
+                             f"FY{fy}: net income sourced from the "
+                             "available-to-common tag while preferred equity "
+                             "is nonzero — the value is net of preferred "
+                             "dividends.", item="net_income")
+
+            onl = v.get("other_noncurrent_liabilities")
+            if (onl is not None and onl.tag.endswith(
+                    "DeferredIncomeTaxesAndOtherLiabilitiesNoncurrent")):
+                dtl = v.get("deferred_tax_liabilities")
+                if dtl is not None and dtl.source == "tag" and dtl.value != 0:
+                    v["deferred_tax_liabilities"] = Fact(
+                        0.0, "USD", dtl.tag, "zero_logged",
+                        end=self.fye_map[fy])
+                    ctx.warn("combined_dtl_other",
+                             f"FY{fy}: deferred taxes reported inside the "
+                             "combined DTL+other noncurrent liabilities line; "
+                             f"the separate DTL tag ({dtl.value:,.0f}) zeroed "
+                             "to avoid double counting.",
+                             item="deferred_tax_liabilities")
 
             ap = v.get("accounts_payable")
             if ap is not None and ap.tag.endswith("AccountsPayableAndAccruedLiabilitiesCurrent"):
@@ -653,6 +709,15 @@ class _Mapper:
     def restatement_warnings(self, run: list[int]) -> None:
         for fy in run:
             for name, f in self.values[fy].items():
+                if f.sign_flip_suspected:
+                    self.warnings.append(IngestWarning(
+                        code="sign_flip_suspected",
+                        message=(f"FY{fy}: a later filing re-reports {name} "
+                                 f"with the exact opposite sign "
+                                 f"({-f.value:,.0f} vs {f.value:,.0f} as "
+                                 "first filed) — treated as a tagging error, "
+                                 "originally-filed sign kept."),
+                        fiscal_year=fy, item=name))
                 if not f.was_restated:
                     continue
                 if f.unit in ("shares", "USD/shares"):

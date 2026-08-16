@@ -30,6 +30,7 @@ class Fact:
     first_filed_value: float | None = None
     was_restated: bool = False
     restatement_delta_pct: float | None = None
+    sign_flip_suspected: bool = False
 
 
 @dataclass

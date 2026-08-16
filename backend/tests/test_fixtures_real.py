@@ -270,3 +270,72 @@ class TestChainCoverage:
         # Items no fixture filer ever tags — reviewed, acceptable for optionals:
         acceptable = {"preferred_equity", "temporary_equity"}
         assert set(never_tagged) <= acceptable | set(never_tagged), "informational"
+
+
+class TestChainRound20260816:
+    """Batched chain round (owner-approved 2026-08-16): six cold-start
+    failures diagnosed and fixed — each test pins the exact verified value
+    from the diagnosis, so a chain regression reads as the filer's number
+    changing, never as an abstract failure."""
+
+    def test_lly_capex_resolves_via_other_ppe_tag(self):
+        h = build_financial_history("LLY", source_for("LLY"))
+        f = h.periods[-1].cashflow["capex"]
+        assert f.tag == "us-gaap:PaymentsToAcquireOtherPropertyPlantAndEquipment"
+        assert f.value == pytest.approx(7_841_000_000)
+
+    def test_bkng_net_income_post_preferred_tag_no_warning(self):
+        h = build_financial_history("BKNG", source_for("BKNG"))
+        f = h.periods[-1].income["net_income"]
+        assert f.tag == "us-gaap:NetIncomeLossAvailableToCommonStockholdersBasic"
+        assert f.value == pytest.approx(5_404_000_000)
+        # BKNG has no preferred equity → the post-preferred-basis warning
+        # must NOT fire (it exists for filers where the bases differ)
+        assert not any(w.code == "ni_post_preferred_basis" for w in h.warnings)
+
+    def test_uber_nonredeemable_nci_closes_h1(self):
+        h = build_financial_history("UBER", source_for("UBER"))
+        f = h.periods[-1].balance["noncontrolling_interest"]
+        assert f.tag == "us-gaap:NonredeemableNoncontrollingInterest"
+        assert f.value == pytest.approx(877_000_000)
+
+    def test_nke_combined_tags_lift_coverage_above_the_floor(self):
+        # The floor is untouched — the fix is mapping, and this proves it:
+        # 56% before the chain round, effectively full coverage after.
+        h = build_financial_history("NKE", source_for("NKE"))
+        fy0 = h.periods[-1]
+        assert fy0.balance["inventory"].tag == \
+            "us-gaap:InventoryFinishedGoodsNetOfReserves"
+        assert fy0.balance["other_noncurrent_assets"].tag == \
+            "us-gaap:DeferredIncomeTaxesAndOtherAssetsNoncurrent"
+        assert fy0.balance["other_noncurrent_liabilities"].tag == \
+            "us-gaap:DeferredIncomeTaxesAndOtherLiabilitiesNoncurrent"
+        assert h.coverage.assets_named_share > 0.90
+        assert not any(w.code == "coverage_low" for w in h.warnings)
+
+    def test_orcl_nci_income_derived_and_h3_ties(self):
+        h = build_financial_history("ORCL", source_for("ORCL"))
+        f = h.periods[-1].income["nci_income"]
+        assert f.source == "derived"
+        assert f.value == pytest.approx(222_000_000)
+        assert any(w.code == "nci_income_derived" for w in h.warnings)
+
+    def test_amd_sign_flip_guard_keeps_original_signs(self):
+        # AMD's FY2023 10-K re-reports FY2021 CFI/CFF exactly negated (filer
+        # tagging error). The guard keeps the originally-filed signs, warns,
+        # and H2 ties again.
+        h = build_financial_history("AMD", source_for("AMD"))
+        p21 = next(p for p in h.periods if p.fiscal_year == 2021)
+        assert p21.cashflow["cash_from_investing"].value == \
+            pytest.approx(-686_000_000)
+        assert p21.cashflow["cash_from_financing"].value == \
+            pytest.approx(-1_895_000_000)
+        assert p21.cashflow["cash_from_financing"].sign_flip_suspected
+        assert any(w.code == "sign_flip_suspected" for w in h.warnings)
+
+    def test_hsy_is_honestly_unsupported(self):
+        # No undimensioned WA-share or EPS tag exists in HSY's companyfacts —
+        # neither the chain nor the NI÷EPS derivation can work. Honest gate,
+        # honest message.
+        from ingest.assemble import known_unsupported
+        assert "share class" in known_unsupported()["HSY"]

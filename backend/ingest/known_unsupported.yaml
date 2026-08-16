@@ -15,3 +15,12 @@
     extension tags (verified: no standard us-gaap capex tag carries a value in
     any year — a regulated-utility presentation). Capex is required for a DCF,
     and extension-taxonomy support is a later phase.
+
+- ticker: HSY
+  reason: >
+    Hershey reports weighted-average shares AND earnings per share only by
+    share class in dimensional XBRL, which the SEC companyfacts API strips
+    (verified: no undimensioned WA-share or EPS tag in any year). Both the
+    direct share chain and the NI÷EPS derivation used for other dual-class
+    filers are therefore impossible. Filing-level dimensional XBRL support
+    is a later phase.
