@@ -85,12 +85,26 @@ printed yet — that one difference explains most of the gap. This is a design
 stance (derivable, auditable, no hand-picked growth), not an accident, and it
 reads conservative almost everywhere.
 
-The exception is ADBE, where the compounder profile (10-year horizon,
-half-cosine fade, terminal growth at the 10Y ceiling) produces the most
+The exception is ADBE, where the compounder profile produces the most
 aggressive number in the room: $502 against the comparator's $324 and a
-40-analyst consensus of $270. Both models call ADBE undervalued; ours says it
-loudly. The compounder profile's contribution to that figure is under internal
-audit (decomposition by rule: horizon, fade shape, terminal-g ceiling).
+40-analyst consensus of $270. The decomposition audit (2026-08-16) resolved
+where the figure comes from. Under house-default conventions — 5-year
+horizon, linear fade, 2.5% terminal cap — our engine values ADBE at **$315
+(+19%)**, nearly identical to the comparator's 5-year model ($324, +23%):
+two independent implementations agree at the same conventions. The entire
+remaining gap is the compounder profile's two levers, both disclosed on the
+methodology page: terminal growth at the 10Y instead of the house cap
+(+$118/share alone) and the 10-year horizon (+$61 alone; $502 with both and
+their interaction). The half-cosine fade shape contributes ~$1 — its
+justification is kink-free structure, not magnitude. The terminal-growth
+lever's impact scales with 1/(WACC − g), so it is largest exactly for
+low-WACC compounders; this is the aggressive edge of a published constraint
+(g ≤ 10Y, Damodaran), applied at the boundary for filers whose history
+earned the classification, with the house-cap disclosure firing on every
+such default. We are above the market on ADBE because the model believes
+ADBE's own filed growth history and prices its durability at the published
+ceiling; the market prices forward risk the filings have not printed. Both
+positions are stated; neither is tuned toward the other.
 
 Directional agreement with the comparator's primary (5y) model: same side of
 the market price on ADBE, TXN, INTC, and CSCO; opposite side on CL (borderline),
