@@ -31,7 +31,14 @@ from ingest.models import FinancialHistory
 from market.models import MarketInputs
 
 from .assumptions import derive_assumptions
-from .dcf import _resolve_roic, _stub, build_bridge, terminal_gordon, ufcf_schedule
+from .dcf import (
+    _resolve_roic,
+    _stub,
+    build_bridge,
+    rate_path_for,
+    terminal_gordon,
+    ufcf_schedule,
+)
 from .errors import InvalidAssumptionError
 from .models import Assumptions
 from .projections import project
@@ -56,14 +63,22 @@ class ImpliedResult:
 
 
 def _gordon_per_share(history: FinancialHistory, assumptions: Assumptions,
-                      wacc: float, stub: float) -> float:
+                      wb, stub: float, shift: float = 0.0) -> float:
     """Gordon-leg value per share without the sensitivity grids — the hot path
-    of the solver (bisection re-values ~50× per field)."""
+    of the solver (bisection re-values ~50× per field). Discounts along the
+    same beta-convergence rate path as the forward model; `shift` applies a
+    parallel move of the whole path (the drivers' WACC composite)."""
     projections = project(history, assumptions)
+    path = rate_path_for(wb, assumptions, len(projections), stub)
+    if shift:
+        path = path.shifted(shift)
     g = assumptions.eff("terminal_growth")
-    roic = _resolve_roic(assumptions, g, wacc, warnings=None)
-    schedule = ufcf_schedule(projections, assumptions, wacc, stub)
-    leg = terminal_gordon(projections, assumptions, wacc, g, roic, stub)
+    if g >= path.terminal - 1e-9:
+        raise InvalidAssumptionError("terminal_growth",
+                                     "at or above the terminal WACC", g)
+    roic = _resolve_roic(assumptions, g, path.terminal, warnings=None)
+    schedule = ufcf_schedule(projections, assumptions, path, stub)
+    leg = terminal_gordon(projections, assumptions, path, g, roic, stub)
     ev = sum(y.pv for y in schedule) + leg.pv
     return build_bridge(history, assumptions, "gordon", ev).value_per_share
 
@@ -105,13 +120,14 @@ def implied_assumption(history: FinancialHistory, market: MarketInputs,
                          f"(supported: {', '.join(FIELDS)})")
     target = market.price.value if target_price is None else target_price
     base = derive_assumptions(history, market, profile=profile)
-    wacc = build_wacc(history, market, base).wacc
+    wb = build_wacc(history, market, base)
     stub = _stub(valuation_date, history.periods[-1].end)
     fy1 = project(history, base)[0]
     da1_ratio = fy1.cashflow["d_and_a"] / fy1.income["revenue"]
 
     if field == "terminal_growth":
-        lo, hi = -0.02, wacc - 0.0025
+        # the perpetuity's denominator runs at the TERMINAL rate
+        lo, hi = -0.02, wb.terminal_wacc - 0.0025
         derived = base.eff("terminal_growth")
     elif field == "capex_pct":
         lo, hi = 0.0, 0.60
@@ -126,7 +142,7 @@ def implied_assumption(history: FinancialHistory, market: MarketInputs,
     def f(x: float) -> float:
         candidate = copy.deepcopy(base)
         _apply(candidate, field, x, da1_ratio)
-        return _gordon_per_share(history, candidate, wacc, stub) - target
+        return _gordon_per_share(history, candidate, wb, stub) - target
 
     f_lo, f_hi = f(lo), f(hi)
     if f_lo == 0.0 or f_hi == 0.0:
@@ -179,13 +195,13 @@ def value_curve(history: FinancialHistory, market: MarketInputs,
     if field not in FIELDS:
         raise ValueError(f"unsupported curve field {field!r} "
                          f"(supported: {', '.join(FIELDS)})")
-    wacc = build_wacc(history, market, assumptions).wacc
+    wb = build_wacc(history, market, assumptions)
     stub = _stub(valuation_date, history.periods[-1].end)
     fy1 = project(history, assumptions)[0]
     da1_ratio = fy1.cashflow["d_and_a"] / fy1.income["revenue"]
 
     if field == "terminal_growth":
-        lo, hi = -0.02, wacc - 0.0025
+        lo, hi = -0.02, wb.terminal_wacc - 0.0025
     elif field == "capex_pct":
         lo, hi = 0.0, 0.60
     elif field == "revenue_growth_fy1":
@@ -202,7 +218,7 @@ def value_curve(history: FinancialHistory, market: MarketInputs,
         candidate = copy.deepcopy(assumptions)
         _apply(candidate, field, x, da1_ratio)
         try:
-            v = _gordon_per_share(history, candidate, wacc, stub)
+            v = _gordon_per_share(history, candidate, wb, stub)
         except (ValueError, ZeroDivisionError, InvalidAssumptionError):
             v = None                       # honest gap, not an interpolation
         points.append((x, v))

@@ -23,7 +23,7 @@ class TestCurveShape:
         lo, hi = curve["domain"]
         xs = [p[0] for p in curve["points"]]
         assert lo == -0.02
-        assert hi == pytest.approx(payload["wacc"]["wacc"] - 0.0025)
+        assert hi == pytest.approx(payload["wacc"]["terminal_wacc"] - 0.0025)
         assert len(xs) >= 25
         assert xs == sorted(xs)
         assert all(lo <= x <= hi for x in xs)

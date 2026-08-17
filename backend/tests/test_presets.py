@@ -129,7 +129,7 @@ class TestStreetConvention:
                          PRESETS["street_convention"], h, mkt, VD)
         with pytest.raises(InvalidAssumptionError) as exc:
             build_model(h, mkt, valuation_date=VD, assumptions=a)
-        assert "below WACC" in str(exc.value)
+        assert "below the terminal WACC" in str(exc.value)
 
     def test_house_cap_flag_not_suppressed_names_the_preset(self):
         # street g (4%) = toy rf: within the published g ≤ rf constraint, so
@@ -181,14 +181,18 @@ class TestDamodaranImplied:
         assert entry["value"] == NOMINAL_GDP_PROXY
 
     def test_validation_never_bypassed(self):
-        # ERP forced tiny via override on top of the preset → WACC below the
-        # preset's g → the hard block still fires, preset or no preset
+        # ERP forced tiny via override on top of the preset → the TERMINAL
+        # WACC (the perpetuity's denominator under beta convergence) falls
+        # below the preset's g → the hard block still fires, preset or no
+        # preset. (erp 1% no longer blocks: terminal beta 1.0 holds the
+        # terminal rate just above g — that case now builds with the
+        # terminal_spread_thin warning, which is the designed behavior.)
         h, mkt = toy_history(), toy_market()
         a = apply_preset(derive_assumptions(h, mkt),
                          PRESETS["damodaran_implied"], h, mkt, VD)
         with pytest.raises(InvalidAssumptionError):
             build_model(h, mkt, valuation_date=VD, assumptions=a,
-                        overrides={"erp": 0.01, "beta": 0.1})
+                        overrides={"erp": 0.001, "beta": 0.1})
 
 
 class TestDownside:

@@ -49,6 +49,7 @@ PLAIN_LABELS = {
     "erp": "Equity risk premium (ERP)",
     "beta": "Beta (2y weekly, adjusted)",
     "beta_raw": "Beta, raw regression (context)",
+    "terminal_beta": "Stable-period beta (perpetuity)",
     "beta_adjusted": "Blume-adjust beta",
     "embedded_debt_rate": "Embedded debt rate (interest ÷ debt)",
     "interest_income_yield": "Interest income yield",

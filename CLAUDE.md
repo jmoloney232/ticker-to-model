@@ -54,6 +54,25 @@ Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
 
 ## Decision log (recent additions)
 
+- **Terminal beta convergence (owner, 2026-08-17):** β fades linearly from the
+  Blume-adjusted current estimate to `terminal_beta` = midpoint(β, 1.0) by the
+  final explicit year; explicit flows discount along the per-year WACC path
+  (cumulative df row, live in the workbook); every perpetuity — Gordon TV and
+  EPV's stable phase (two-phase EPV) — capitalizes at the terminal WACC; the
+  g ≥ WACC block, the spread floor, and the implied-g crosscheck bind on the
+  terminal rate; grids/drivers shift the whole path in parallel. Weights, Kd,
+  rf, ERP held. Reduction invariant tested: terminal_beta = β reproduces the
+  single-WACC model. Methodology: `terminal_beta_convergence`.
+- **Terminal spread floor (owner, 2026-08-17, implemented):** derived g
+  clamped at terminal WACC − 2% (no-op today); `terminal_spread_thin` warns
+  on user/preset values in the band, never clamps. The motivating rate-swing
+  concern was tested and DISPROVED — recorded in methodology.
+- **Classifier capex basis (owner, 2026-08-17):** capex/depreciation replaces
+  capex/D&A in the reinvestment-heavy measure and the fade-mismatch trigger
+  (thresholds untouched). Flips: DIS/MRK/NOW gain the modifier; LLY (4.25×)
+  and ORCL (4.99×) cross the 4× cap and lose it (ORCL −24.5%); CSCO discloses
+  at 16×. Pinned in fixture regressions.
+
 - **Split D&A basis (owner, 2026-08-16):** PP&E roll consumes depreciation
   only (D&A − intangible amortization, subtraction-derived, identity floor
   dep ≤ beg PP&E + capex); intangibles run off at their own rate, add-back

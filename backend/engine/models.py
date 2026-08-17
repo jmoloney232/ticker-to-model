@@ -115,7 +115,50 @@ class WaccBuild:
     gross_debt: float
     weight_equity: float
     weight_debt: float
-    wacc: float
+    wacc: float                           # year-1 rate (β path starts at beta_used)
+    # Terminal beta convergence (owner-approved 2026-08-17): β fades linearly
+    # from beta_used to terminal_beta over the explicit horizon; only the
+    # equity-risk component converges (weights, Kd, rf, ERP held).
+    terminal_beta: float = 1.0
+    terminal_wacc: float = 0.0            # rate of the stable period (perpetuity)
+    year_betas: tuple[float, ...] = ()
+    year_rates: tuple[float, ...] = ()    # WACC_i per explicit year
+
+
+@dataclass(frozen=True)
+class RatePath:
+    """A per-year discount-rate path plus the stable-period rate. Discounting
+    to exponent e compounds each explicit-year segment at that year's rate and
+    the stretch beyond the final flow at the terminal rate. A flat path (all
+    rates equal) reproduces single-WACC discounting to float precision — the
+    reduction invariant the tests pin."""
+
+    rates: tuple[float, ...]              # aligned with times (year 1..N)
+    terminal: float
+    times: tuple[float, ...]              # discount exponent of each year's flow
+
+    @classmethod
+    def flat(cls, rate: float, times: tuple[float, ...]) -> RatePath:
+        return cls(tuple(rate for _ in times), rate, tuple(times))
+
+    def shifted(self, delta: float) -> RatePath:
+        """Parallel shift — the sensitivity grids' WACC axis."""
+        return RatePath(tuple(r + delta for r in self.rates),
+                        self.terminal + delta, self.times)
+
+    def df_at(self, exp: float) -> float:
+        # Chain semantics, identical to the workbook's df row: the segment
+        # ending at each flow time compounds at that year's rate — including
+        # a NEGATIVE first flow time (stale stub + mid-year), which compounds
+        # forward at year 1's rate exactly like POWER(1+w1, −t1) in the cell.
+        df, prev = 1.0, 0.0
+        for t_i, r in zip(self.times, self.rates, strict=True):
+            end = min(t_i, exp)
+            df *= (1 + r) ** -(end - prev)
+            prev = end
+            if prev >= exp:
+                return df
+        return df * (1 + self.terminal) ** -(exp - prev)
 
 
 @dataclass

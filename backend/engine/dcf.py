@@ -32,6 +32,7 @@ from .models import (
     MethodResult,
     ModelResult,
     ProjectedPeriod,
+    RatePath,
     SensitivityGrid,
     TerminalLeg,
     UFCFYear,
@@ -72,8 +73,25 @@ def _stub(vd: date, fy0_end: date) -> float:
     return (vd - fy0_end).days / 365.25
 
 
+def rate_path_for(wb: WaccBuild, assumptions: Assumptions, n_years: int,
+                  stub: float) -> RatePath:
+    """The discount-rate path (owner-approved 2026-08-17): per-year rates
+    from the beta fade, the terminal rate beyond the final explicit flow,
+    and the flow times shared by every discounting surface (schedule, both
+    terminal legs, EPV, reverse, grids)."""
+    midyear = bool(assumptions.eff("midyear"))
+    times = tuple((i + 1) - stub - (0.5 if midyear else 0.0)
+                  for i in range(n_years))
+    rates = wb.year_rates
+    if len(rates) != n_years:      # manually built assumptions (tests, tools)
+        rates = tuple(wb.wacc for _ in range(n_years))
+    return RatePath(rates=rates,
+                    terminal=wb.terminal_wacc if wb.terminal_wacc else wb.wacc,
+                    times=times)
+
+
 def ufcf_schedule(projections: list[ProjectedPeriod], assumptions: Assumptions,
-                  wacc: float, stub: float) -> list[UFCFYear]:
+                  path: RatePath, stub: float) -> list[UFCFYear]:
     taxes = tax_path(assumptions)
     addback_on = bool(assumptions.eff("sbc_addback"))
     midyear = bool(assumptions.eff("midyear"))
@@ -87,7 +105,7 @@ def ufcf_schedule(projections: list[ProjectedPeriod], assumptions: Assumptions,
         delta_nwc = -p.cashflow["working_capital_change"]
         ufcf = nopat + da + sbc_addback - capex - delta_nwc
         t = (i + 1) - stub - (0.5 if midyear else 0.0)
-        df = (1 + wacc) ** (-t)
+        df = path.df_at(t)
         out.append(UFCFYear(fiscal_year=p.fiscal_year, ebit=ebit, tax_rate=taxes[i],
                             nopat=nopat, d_and_a=da, sbc_addback=sbc_addback,
                             capex=capex, delta_nwc=delta_nwc, ufcf=ufcf,
@@ -126,25 +144,30 @@ def _resolve_roic(assumptions: Assumptions, g: float, wacc: float,
 
 
 def terminal_gordon(projections: list[ProjectedPeriod], assumptions: Assumptions,
-                    wacc: float, g: float, roic: float, stub: float) -> TerminalLeg:
-    """Gordon with reinvestment consistency: RR = g/ROIC_t. Mid-year on
-    discounts at t_N − 0.5 (perpetual flows arrive through each year)."""
+                    path: RatePath, g: float, roic: float,
+                    stub: float) -> TerminalLeg:
+    """Gordon with reinvestment consistency: RR = g/ROIC_t. The perpetuity
+    lives entirely in the stable period, so its denominator is the TERMINAL
+    rate; discounting back runs along the path. Mid-year on discounts at
+    t_N − 0.5 (perpetual flows arrive through each year)."""
     fy5 = projections[-1]
     marginal = assumptions.eff("marginal_tax")
     nopat_n1 = fy5.income["operating_income"] * (1 + g) * (1 - marginal)
     rr = g / roic
     fcf_terminal = nopat_n1 * (1 - rr)
-    tv = fcf_terminal / (wacc - g)
+    tv = fcf_terminal / (path.terminal - g)
     t_n = len(projections) - stub
     exponent = t_n - (0.5 if assumptions.eff("midyear") else 0.0)
     return TerminalLeg(method="gordon", value_at_fyeN=tv, exponent=exponent,
-                       pv=tv * (1 + wacc) ** (-exponent),
+                       pv=tv * path.df_at(exponent),
                        detail={"nopat_n1": nopat_n1, "reinvestment_rate": rr,
-                               "fcf_terminal": fcf_terminal, "g": g, "roic": roic})
+                               "fcf_terminal": fcf_terminal, "g": g,
+                               "roic": roic,
+                               "terminal_wacc": path.terminal})
 
 
 def terminal_exit(projections: list[ProjectedPeriod], multiple: float,
-                  wacc: float, stub: float) -> TerminalLeg:
+                  path: RatePath, stub: float) -> TerminalLeg:
     """Exit multiple discounts at FULL t_N regardless of the mid-year toggle —
     a sale is a point-in-time year-end event (deliberate asymmetry, tested)."""
     fy5 = projections[-1]
@@ -152,7 +175,7 @@ def terminal_exit(projections: list[ProjectedPeriod], multiple: float,
     tv = multiple * ebitda_n
     t_n = len(projections) - stub
     return TerminalLeg(method="exit_multiple", value_at_fyeN=tv, exponent=t_n,
-                       pv=tv * (1 + wacc) ** (-t_n),
+                       pv=tv * path.df_at(t_n),
                        detail={"multiple": multiple, "ebitda_n": ebitda_n})
 
 
@@ -203,55 +226,62 @@ def build_bridge(history: FinancialHistory, assumptions: Assumptions,
 
 
 def _value_per_share(history: FinancialHistory, assumptions: Assumptions,
-                     projections: list[ProjectedPeriod], stub: float, wacc: float,
-                     g: float | None, multiple: float | None) -> float | None:
-    """One sensitivity cell: full re-valuation at (wacc, g) or (wacc, multiple).
-    Varying g re-projects (the growth path fades INTO g — spec: only the varied
-    inputs change, but everything downstream of them recomputes)."""
+                     projections: list[ProjectedPeriod], stub: float,
+                     path: RatePath, g: float | None,
+                     multiple: float | None) -> float | None:
+    """One sensitivity cell: full re-valuation at (rate path, g) or (rate
+    path, multiple). Varying g re-projects (the growth path fades INTO g —
+    spec: only the varied inputs change, but everything downstream of them
+    recomputes). The perpetuity guard checks the TERMINAL rate — the one in
+    the denominator."""
     if g is not None:
-        if g >= wacc - 1e-9:
+        if g >= path.terminal - 1e-9:
             return None
         saved = assumptions.fields["terminal_growth"].override
         assumptions.fields["terminal_growth"].override = g
         try:
             proj = project(history, assumptions)
-            roic = _resolve_roic(assumptions, g, wacc, warnings=None)
-            schedule = ufcf_schedule(proj, assumptions, wacc, stub)
-            tv = terminal_gordon(proj, assumptions, wacc, g, roic, stub)
+            roic = _resolve_roic(assumptions, g, path.terminal, warnings=None)
+            schedule = ufcf_schedule(proj, assumptions, path, stub)
+            tv = terminal_gordon(proj, assumptions, path, g, roic, stub)
         finally:
             assumptions.fields["terminal_growth"].override = saved
     else:
         proj = projections
-        schedule = ufcf_schedule(proj, assumptions, wacc, stub)
-        tv = terminal_exit(proj, multiple, wacc, stub)
+        schedule = ufcf_schedule(proj, assumptions, path, stub)
+        tv = terminal_exit(proj, multiple, path, stub)
     ev = sum(y.pv for y in schedule) + tv.pv
     return build_bridge(history, assumptions, "cell", ev).value_per_share
 
 
 def sensitivity_grids(history: FinancialHistory, assumptions: Assumptions,
                       projections: list[ProjectedPeriod], stub: float,
-                      base_wacc: float, gordon_available: bool = True,
+                      path: RatePath, gordon_available: bool = True,
                       exit_available: bool = True) -> dict[str, SensitivityGrid]:
     """Grids only for available legs — perturbing an unavailable leg (negative
-    terminal anchor) would print 25 variations of a sign error."""
+    terminal anchor) would print 25 variations of a sign error. The WACC axis
+    is a PARALLEL SHIFT of the whole rate path including the terminal rate —
+    the only construction that keeps the grid interpretable under
+    convergence; row labels show the shifted year-1 rate."""
     g0 = assumptions.eff("terminal_growth")
-    waccs = [base_wacc + o * WACC_STEP for o in GRID_OFFSETS]
+    waccs = [path.rates[0] + o * WACC_STEP for o in GRID_OFFSETS]
+    row_paths = [path.shifted(o * WACC_STEP) for o in GRID_OFFSETS]
     gs = [g0 + o * G_STEP for o in G_OFFSETS]
     grids = {}
     if gordon_available:
         grids["wacc_x_g"] = SensitivityGrid(
             row_label="WACC", col_label="terminal g", rows=waccs, cols=gs,
-            cells=[[_value_per_share(history, assumptions, projections, stub, w,
-                                     g=g, multiple=None)
-                    for g in gs] for w in waccs])
+            cells=[[_value_per_share(history, assumptions, projections, stub,
+                                     rp, g=g, multiple=None)
+                    for g in gs] for rp in row_paths])
     m0 = assumptions.eff("exit_multiple")
     if m0 is not None and exit_available:
         mults = [m0 + o * MULT_STEP for o in GRID_OFFSETS]
         grids["wacc_x_multiple"] = SensitivityGrid(
             row_label="WACC", col_label="exit EV/EBITDA", rows=waccs, cols=mults,
-            cells=[[_value_per_share(history, assumptions, projections, stub, w,
-                                     g=None, multiple=m)
-                    for m in mults] for w in waccs])
+            cells=[[_value_per_share(history, assumptions, projections, stub,
+                                     rp, g=None, multiple=m)
+                    for m in mults] for rp in row_paths])
     return grids
 
 
@@ -271,6 +301,11 @@ EPV_FIELDS = (
     "coverage_ratio", "kd_synthetic", "embedded_debt_rate",  # cost of debt
     "share_count",                                       # WACC weights + /share
     "cash_floor_pct",                                    # the shared bridge
+    # two-phase EPV (owner-approved 2026-08-17): the flat stream discounts
+    # along the beta-convergence path over the explicit window, then
+    # capitalizes at the terminal rate — so the convergence target and the
+    # window length are genuinely EPV's inputs now
+    "terminal_beta", "forecast_years",
 )
 
 FAMILIES = (
@@ -290,13 +325,17 @@ EPV_NOTE = ("No-growth view: normalized operating profit, taxed at the "
             "and terminal assumptions, not the cost-of-capital convention.")
 
 
-def earnings_power(history: FinancialHistory, a: Assumptions, wacc: float,
+def earnings_power(history: FinancialHistory, a: Assumptions, path: RatePath,
                    stub: float) -> MethodResult:
     """EPV: FY0 revenue × normalized EBIT margin (profile-ruled default,
-    editable) × (1 − marginal tax) ÷ WACC, with the same mid-year/stub
-    timing the explicit years use — a flat perpetuity whose first flow sits
-    at the first forecast midpoint. That shared timing is what lets the
-    g = 0 DCF converge to EPV exactly (tested invariant)."""
+    editable) × (1 − marginal tax), as a flat stream discounted along the
+    SAME rate path as the DCF — the explicit window as an annuity, the
+    stable period capitalized at the terminal rate (owner-approved
+    2026-08-17: the regression beta is an estimate of present conditions
+    for EPV too, and any other rate structure would break the g = 0
+    DCF → EPV convergence invariant and make Gordon − EPV incomparable).
+    Flow times are the schedule's own exponents, so the shared timing that
+    made the single-rate convergence exact still does."""
     fy0 = history.periods[-1]
     margin = a.eff("epv_margin")
     ebit_norm = fy0.value("revenue") * margin
@@ -312,9 +351,9 @@ def earnings_power(history: FinancialHistory, a: Assumptions, wacc: float,
                 "as the negative terminal anchor)."),
             note=EPV_NOTE)
     nopat = ebit_norm * (1 - a.eff("marginal_tax"))
-    t1 = 1 - stub - (0.5 if a.eff("midyear") else 0.0)
-    timing = (1 + wacc) ** (1 - t1)
-    ev = nopat / wacc * timing
+    annuity = sum(path.df_at(t) for t in path.times)
+    tail_df = path.df_at(path.times[-1])
+    ev = nopat * (annuity + tail_df / path.terminal)
     bridge = build_bridge(history, a, "epv", ev)
     return MethodResult(
         id="epv", label="Earnings power (no growth)", order=2,
@@ -329,8 +368,12 @@ def earnings_power(history: FinancialHistory, a: Assumptions, wacc: float,
                          ebit_norm),
             MethodDetail("nopat_normalized",
                          "Normalized NOPAT (marginal-taxed)", "usd", nopat),
-            MethodDetail("timing_factor", "Mid-year/stub timing factor", "x",
-                         timing),
+            MethodDetail("annuity_factor",
+                         "PV factor, explicit window (flat flows)", "x",
+                         annuity),
+            MethodDetail("terminal_cap_rate",
+                         "Stable-period capitalization rate (terminal WACC)",
+                         "rate", path.terminal),
         ])
 
 
@@ -533,9 +576,12 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                      "source."),
             detail={"as_of": f"{RATING_TABLE_AS_OF[0]}-{RATING_TABLE_AS_OF[1]:02d}"}))
     g = a.eff("terminal_growth")
-    if g >= wacc:
-        raise InvalidAssumptionError("terminal_growth",
-                                     f"must be below WACC ({wacc:.2%})", g)
+    w_t = wacc_build.terminal_wacc
+    if g >= w_t:
+        raise InvalidAssumptionError(
+            "terminal_growth",
+            f"must be below the terminal WACC ({w_t:.2%}) — the perpetuity's "
+            "denominator runs at the stable-period rate", g)
     rf = a.eff("risk_free")
     house_cap = min(TERMINAL_G_CEIL, rf)
     # Fires on ANY layer above the house cap — user, preset, or a profile
@@ -562,28 +608,28 @@ def build_model(history: FinancialHistory, market: MarketInputs,
     # g ≥ WACC hard block above stays the hard boundary.
     user_layer = (tg_field.override is not None
                   or tg_field.preset_value is not None)
-    if user_layer and wacc - TERMINAL_SPREAD_FLOOR < g < wacc:
+    if user_layer and w_t - TERMINAL_SPREAD_FLOOR < g < w_t:
         warnings.append(EngineWarning(
             code="terminal_spread_thin",
-            message=(f"Terminal spread WACC − g = {wacc - g:.2%} is below "
+            message=(f"Terminal spread WACC − g = {w_t - g:.2%} is below "
                      f"the {TERMINAL_SPREAD_FLOOR:.0%} floor — the implied "
-                     f"terminal multiple is {1 / (wacc - g):,.0f}× terminal "
+                     f"terminal multiple is {1 / (w_t - g):,.0f}× terminal "
                      "FCF, and the spread is inside the estimate's own "
                      "uncertainty (beta standard error and the contested "
                      "ERP alone put ±1%+ on the cost of equity). The value "
                      "shown is dominated by that choice."),
-            detail={"spread": wacc - g,
-                    "implied_multiple": 1 / (wacc - g),
+            detail={"spread": w_t - g,
+                    "implied_multiple": 1 / (w_t - g),
                     "provenance": tg_field.provenance}))
     elif not user_layer and "spread floor" in tg_field.derivation:
         warnings.append(EngineWarning(
             code="terminal_spread_floor",
             message=(f"The derived terminal-growth default was clamped to "
-                     f"WACC − {TERMINAL_SPREAD_FLOOR:.0%} = "
+                     f"terminal WACC − {TERMINAL_SPREAD_FLOOR:.0%} = "
                      f"{tg_field.value:.2%} — the unclamped default sat "
                      "inside the model's own estimation noise (methodology: "
                      "terminal_spread_floor)."),
-            detail={"spread": wacc - tg_field.value}))
+            detail={"spread": w_t - tg_field.value}))
 
     projections = project(history, a)
     for p in projections:
@@ -677,7 +723,8 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                      "a year before the valuation date. FY1 is partly or fully in "
                      "the past; refresh EDGAR data or expect stub-period artifacts.")))
 
-    schedule = ufcf_schedule(projections, a, wacc, stub)
+    path = rate_path_for(wacc_build, a, len(projections), stub)
+    schedule = ufcf_schedule(projections, a, path, stub)
     if any(y.ufcf < 0 for y in schedule):
         warnings.append(EngineWarning(
             code="negative_ufcf",
@@ -701,8 +748,8 @@ def build_model(history: FinancialHistory, market: MarketInputs,
     pv_explicit = sum(y.pv for y in schedule)
 
     if nopat_anchor > 0:
-        roic = _resolve_roic(a, g, wacc, warnings)
-        gordon = terminal_gordon(projections, a, wacc, g, roic, stub)
+        roic = _resolve_roic(a, g, w_t, warnings)
+        gordon = terminal_gordon(projections, a, path, g, roic, stub)
         terminal["gordon"] = gordon
         crosschecks["implied_exit_multiple"] = gordon.value_at_fyeN / ebitda_n
         bridges["gordon"] = build_bridge(history, a, "gordon",
@@ -721,11 +768,12 @@ def build_model(history: FinancialHistory, market: MarketInputs,
 
     multiple = a.eff("exit_multiple")
     if multiple is not None and ebitda_n > 0:
-        exit_leg = terminal_exit(projections, multiple, wacc, stub)
+        exit_leg = terminal_exit(projections, multiple, path, stub)
         terminal["exit_multiple"] = exit_leg
         if "gordon" in terminal:
+            # against the TERMINAL rate — the perpetuity this interrogates
             crosschecks["implied_terminal_g"] = (
-                wacc - terminal["gordon"].detail["fcf_terminal"]
+                w_t - terminal["gordon"].detail["fcf_terminal"]
                 / exit_leg.value_at_fyeN)
         bridges["exit_multiple"] = build_bridge(history, a, "exit_multiple",
                                                 pv_explicit + exit_leg.pv)
@@ -742,7 +790,7 @@ def build_model(history: FinancialHistory, market: MarketInputs,
                        ("No exit multiple — FY0 EBITDA ≤ 0, so a current "
                         "EV/EBITDA cannot be derived."))
 
-    epv = earnings_power(history, a, wacc, stub)
+    epv = earnings_power(history, a, path, stub)
     if epv.bridge is not None:
         bridges["epv"] = epv.bridge    # bridges stays a complete by-id view
     if not epv.availability.available:
@@ -778,7 +826,7 @@ def build_model(history: FinancialHistory, market: MarketInputs,
     checks = _checks(projections, history, wacc_build, a, terminal,
                      bridges["gordon"].enterprise_value
                      if "gordon" in bridges else None, warnings)
-    grids = sensitivity_grids(history, a, projections, stub, wacc,
+    grids = sensitivity_grids(history, a, projections, stub, path,
                               gordon_available="gordon" in terminal,
                               exit_available="exit_multiple" in terminal)
 

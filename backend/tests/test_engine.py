@@ -392,13 +392,15 @@ class TestTerminalSpreadFloor:
             {w.code for w in m.warnings}
 
     def test_derived_default_clamps_and_discloses(self):
-        # rf 2%, beta 0.1 (Blume → 0.4667... low): WACC ≈ 3.2% → ceiling
-        # ≈ 1.2% sits below the 2% default → clamp + warning + derivation
-        m = toy_model(rf=0.02, beta=0.1)
-        w = m.wacc.wacc
+        # rf 2%, beta −0.5 (Blume → 0.0, terminal beta midpoint → 0.5):
+        # terminal WACC ≈ 3.5% → ceiling ≈ 1.5% sits below the 2% default
+        # → clamp + warning + derivation. The floor binds on the TERMINAL
+        # rate — the perpetuity's denominator (beta convergence, 2026-08-17).
+        m = toy_model(rf=0.02, beta=-0.5)
+        w_t = m.wacc.terminal_wacc
         f = m.assumptions.fields["terminal_growth"]
         assert f.override is None
-        assert f.value == pytest.approx(w - 0.02)
+        assert f.value == pytest.approx(w_t - 0.02)
         assert "spread floor" in f.derivation
         assert any(x.code == "terminal_spread_floor" for x in m.warnings)
 
@@ -418,8 +420,10 @@ class TestTerminalSpreadFloor:
             toy_model(overrides={"terminal_growth": base.wacc.wacc})
 
     def test_constant_matches_methodology(self):
-        import yaml as yamllib
         from pathlib import Path
+
+        import yaml as yamllib
+
         from engine.assumptions import TERMINAL_SPREAD_FLOOR
         doc = yamllib.safe_load(
             (Path(__file__).parent.parent / "engine" / "methodology.yaml")
@@ -778,6 +782,46 @@ def golden_dict(m) -> dict:
         "engine_warning_codes": sorted({w.code for w in m.warnings}),
         "check_statuses": {r.check_id: r.status for r in m.checks.results},
     }
+
+
+class TestBetaConvergenceReduction:
+    """The rate path NESTS the single-WACC model (owner-approved 2026-08-17):
+    with terminal_beta equal to the current beta the path is flat, and every
+    discounted quantity must collapse to the single-rate closed form. The toy
+    market's beta is exactly 1.0, so its derived terminal beta (midpoint) is
+    also 1.0 — the toy exercises the reduction by construction."""
+
+    def test_flat_path_reproduces_single_rate_closed_forms(self):
+        m = toy_model()
+        w = m.wacc.wacc
+        assert m.wacc.terminal_wacc == pytest.approx(w, rel=1e-15)
+        assert m.wacc.terminal_beta == pytest.approx(1.0)
+        for y in m.ufcf:
+            assert y.pv == pytest.approx(y.ufcf * (1 + w) ** -y.exponent,
+                                         rel=1e-12)
+        for leg in m.terminal.values():
+            assert leg.pv == pytest.approx(
+                leg.value_at_fyeN * (1 + w) ** -leg.exponent, rel=1e-12)
+        # two-phase EPV collapses to the old closed form on a flat path
+        epv = next(mr for mr in m.methods if mr.id == "epv")
+        nopat = next(d.value for d in epv.detail
+                     if d.key == "nopat_normalized")
+        t1 = m.ufcf[0].exponent
+        assert epv.enterprise_value == pytest.approx(
+            nopat / w * (1 + w) ** (1 - t1), rel=1e-12)
+
+    def test_msft_with_terminal_beta_pinned_reduces_exactly(self):
+        base = msft_model()
+        m = build_model(base.history, base.market, valuation_date=GOLDEN_VD,
+                        overrides={"terminal_beta": base.wacc.beta_used})
+        w = m.wacc.wacc
+        assert m.wacc.terminal_wacc == pytest.approx(w, rel=1e-12)
+        for y in m.ufcf:
+            assert y.pv == pytest.approx(y.ufcf * (1 + w) ** -y.exponent,
+                                         rel=1e-12)
+        for leg in m.terminal.values():
+            assert leg.pv == pytest.approx(
+                leg.value_at_fyeN * (1 + w) ** -leg.exponent, rel=1e-12)
 
 
 class TestMSFTGoldenAndSanity:

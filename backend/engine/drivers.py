@@ -26,7 +26,7 @@ from ingest.models import FinancialHistory
 from market.models import MarketInputs
 
 from .assumptions import DISPLAY_ONLY
-from .dcf import _stub, build_bridge, terminal_exit, ufcf_schedule
+from .dcf import _stub, build_bridge, rate_path_for, terminal_exit, ufcf_schedule
 from .errors import InvalidAssumptionError
 from .models import Assumptions
 from .projections import project
@@ -41,8 +41,8 @@ WACC_STEP = 0.01
 # the EPV method only — it cannot move the headline leg, so sweeping it
 # would print a zero-impact row
 EXCLUDED = frozenset({
-    "beta", "beta_raw", "erp", "risk_free", "embedded_debt_rate",
-    "coverage_ratio", "interest_income_yield",
+    "beta", "beta_raw", "terminal_beta", "erp", "risk_free",
+    "embedded_debt_rate", "coverage_ratio", "interest_income_yield",
     "share_count", "forecast_years", "epv_margin",
 }) | DISPLAY_ONLY
 
@@ -60,11 +60,14 @@ class DriverImpact:
 
 
 def _exit_per_share(history: FinancialHistory, assumptions: Assumptions,
-                    wacc: float, stub: float) -> float:
+                    wb, stub: float, shift: float = 0.0) -> float:
     projections = project(history, assumptions)
-    schedule = ufcf_schedule(projections, assumptions, wacc, stub)
+    path = rate_path_for(wb, assumptions, len(projections), stub)
+    if shift:
+        path = path.shifted(shift)
+    schedule = ufcf_schedule(projections, assumptions, path, stub)
     leg = terminal_exit(projections, assumptions.eff("exit_multiple"),
-                        wacc, stub)
+                        path, stub)
     ev = sum(y.pv for y in schedule) + leg.pv
     return build_bridge(history, assumptions, "exit_multiple",
                         ev).value_per_share
@@ -78,33 +81,34 @@ def driver_impacts(history: FinancialHistory, market: MarketInputs,
     the WACC composite. A step that leaves the valid domain is clamped to a
     one-sided move; a candidate the engine can't value on either side is
     skipped, never guessed."""
-    wacc = build_wacc(history, market, assumptions).wacc
+    wb = build_wacc(history, market, assumptions)
     stub = _stub(valuation_date, history.periods[-1].end)
     value = _gordon_per_share if leg == "gordon" else _exit_per_share
 
-    def value_at(candidate: Assumptions, w: float) -> float | None:
+    def value_at(candidate: Assumptions, shift: float = 0.0) -> float | None:
         # a probe the engine rejects (domain constraint, degenerate math) is
         # a skipped side, never a guess
         try:
-            return value(history, candidate, w, stub)
+            return value(history, candidate, wb, stub, shift)
         except (ValueError, ZeroDivisionError, InvalidAssumptionError):
             return None
 
-    base = value_at(assumptions, wacc)
+    base = value_at(assumptions)
     if base is None:
         return []
 
     out: list[DriverImpact] = []
 
-    # WACC composite — same sweep convention as the sensitivity-grid rows
-    up = value_at(assumptions, wacc + WACC_STEP)
-    down = value_at(assumptions, wacc - WACC_STEP)
+    # WACC composite — a PARALLEL shift of the whole rate path, the same
+    # convention as the sensitivity-grid rows under beta convergence
+    up = value_at(assumptions, +WACC_STEP)
+    down = value_at(assumptions, -WACC_STEP)
     if up is not None and down is not None:
         impact = (abs(up - base) + abs(down - base)) / 2
         out.append(DriverImpact("wacc", impact, 1 if up > base else -1,
                                 WACC_STEP, "wacc", True))
 
-    g_cap = wacc - 0.0025                  # terminal-growth block edge
+    g_cap = wb.terminal_wacc - 0.0025      # terminal-growth block edge
     for f in assumptions.fields.values():
         if (f.name in EXCLUDED or f.unit not in STEPS
                 or not isinstance(f.effective, (int, float))
@@ -124,7 +128,7 @@ def driver_impacts(history: FinancialHistory, market: MarketInputs,
                 continue
             candidate = copy.deepcopy(assumptions)
             candidate.fields[f.name].override = x
-            v = value_at(candidate, wacc)
+            v = value_at(candidate)
             if v is None:
                 continue
             deltas.append(abs(v - base))

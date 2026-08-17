@@ -111,8 +111,8 @@ ASSUMPTION_GROUPS = [
     ("Taxes", ["effective_tax_fy1", "marginal_tax"]),
     ("Payout", ["payout_ratio"]),
     ("Interest", ["embedded_debt_rate", "interest_income_yield"]),
-    ("Cost of capital", ["beta", "beta_raw", "erp", "risk_free",
-                         "coverage_ratio"]),
+    ("Cost of capital", ["beta", "beta_raw", "terminal_beta", "erp",
+                         "risk_free", "coverage_ratio"]),
     ("Horizon", ["forecast_years"]),
     ("Terminal value", ["terminal_growth", "terminal_growth_rf_ceiling",
                         "terminal_roic"]),
@@ -768,26 +768,31 @@ class _Writer:
         r = self._vrow(ws, r, "NOPAT (N+1) = EBIT5 × (1+g) × (1−marginal)",
                        "nopat6",
                        f"={ebit5}*(1+terminal_growth)*(1-marginal_tax)")
-        r = self._vrow(ws, r, "ROIC used (derived; falls back to WACC when "
-                              "unavailable or ≤ g; terminal_roic_fade → "
-                              "midpoint with WACC)", "roic",
+        r = self._vrow(ws, r, "ROIC used (derived; falls back to terminal "
+                              "WACC when unavailable or ≤ g; "
+                              "terminal_roic_fade → midpoint with it)", "roic",
                        f'=IF(OR(terminal_roic="",terminal_roic<='
-                       f"terminal_growth),{V['wacc']},"
-                       f"IF(terminal_roic_fade,(terminal_roic+{V['wacc']})/2,"
+                       f"terminal_growth),{V['wacc_t']},"
+                       f"IF(terminal_roic_fade,(terminal_roic+{V['wacc_t']})/2,"
                        "terminal_roic))", FMT_PCT)
         r = self._vrow(ws, r, "Reinvestment rate RR = g / ROIC", "rr",
                        f"=terminal_growth/{V['roic']}", FMT_PCT)
         guard = (f'IF({V["nopat6"]}<=0,"unavailable — negative terminal NOPAT '
-                 f'anchor (see Methodology)",IF(terminal_growth>={V["wacc"]},'
-                 f'"blocked — terminal g must be below WACC",{{}}))')
-        r = self._vrow(ws, r, "TV at FYE5", "tv_gordon",
+                 f'anchor (see Methodology)",'
+                 f'IF(terminal_growth>={V["wacc_t"]},'
+                 f'"blocked — terminal g must be below the terminal WACC",'
+                 f"{{}}))")
+        r = self._vrow(ws, r, "TV at FYE5 (perpetuity at the TERMINAL WACC)",
+                       "tv_gordon",
                        "=" + guard.format(
                            f"{V['nopat6']}*(1-{V['rr']})"
-                           f"/({V['wacc']}-terminal_growth)"))
-        r = self._vrow(ws, r, "PV of Gordon TV", "pv_gordon",
+                           f"/({V['wacc_t']}-terminal_growth)"))
+        # exp_gordon equals the final flow's exponent (both are tN − mid-year
+        # shift), so the path discount factor at it IS the last df cell
+        r = self._vrow(ws, r, "PV of Gordon TV (path discount factor)",
+                       "pv_gordon",
                        f"=IF(ISNUMBER({V['tv_gordon']}),{V['tv_gordon']}"
-                       f"*POWER(1+{V['wacc']},-{V['exp_gordon']}),"
-                       f"{V['tv_gordon']})")
+                       f"*{self.df_last},{V['tv_gordon']})")
         r += 1
         ev = (f"=IF(ISNUMBER({V['pv_gordon']}),{V['pv_explicit']}"
               f"+{V['pv_gordon']},{V['pv_gordon']})")
@@ -806,10 +811,14 @@ class _Writer:
                        f'(FY0 EBITDA ≤ 0)",IF({V["ebitda5"]}<=0,'
                        f'"unavailable — negative FY5 EBITDA",'
                        f"exit_multiple*{V['ebitda5']}))")
+        # full tN sits beyond the last flow by the mid-year half-step; that
+        # stretch discounts at the TERMINAL rate (the path's tail)
+        last_t = f"{self._mcol(self.horizon)}{self.val['u_t']}"
         r = self._vrow(ws, r, "PV of exit TV (full tN — deliberate asymmetry)",
                        "pv_exit",
                        f"=IF(ISNUMBER({V['tv_exit']}),{V['tv_exit']}"
-                       f"*POWER(1+{V['wacc']},-{V['tn']}),{V['tv_exit']})")
+                       f"*{self.df_last}*POWER(1+{V['wacc_t']},"
+                       f"-({V['tn']}-{last_t})),{V['tv_exit']})")
         r += 1
         ev = (f"=IF(ISNUMBER({V['pv_exit']}),{V['pv_explicit']}"
               f"+{V['pv_exit']},{V['pv_exit']})")
@@ -817,9 +826,12 @@ class _Writer:
 
     def _block_epv(self, ws, r: int) -> tuple[int, str]:
         """Earnings power: normalized EBIT (FY0 revenue × epv_margin, the
-        profile-ruled editable assumption), marginal-taxed, capitalized at
-        WACC with the SAME first-flow timing as the explicit years — a flat
-        perpetuity the g = 0 DCF converges to exactly (tested)."""
+        profile-ruled editable assumption), marginal-taxed, as a FLAT stream
+        on the same rate path as the DCF — the explicit window as an annuity
+        of the df row, the stable period capitalized at the terminal WACC
+        (two-phase EPV, owner-approved 2026-08-17). Same flow timing as the
+        explicit years, so the g = 0 DCF still converges to EPV exactly
+        (tested)."""
         V = self.val
         self._header(ws, r, "EARNINGS POWER — NO GROWTH (EPV)", span=8)
         r += 1
@@ -829,15 +841,16 @@ class _Writer:
         r = self._vrow(ws, r, "Normalized NOPAT (marginal-taxed — same rate "
                               "as terminal NOPAT)", "epv_nopat",
                        f"={V['epv_ebit']}*(1-marginal_tax)")
-        t1 = f"C{self.val['u_t']}"
-        r = self._vrow(ws, r, "EPV enterprise value = NOPAT / WACC × "
-                              "(1+WACC)^(1−t₁) (maintenance capex = D&A, "
-                              "flat working capital — D&A cancels)",
+        df_rng = (f"C{self.val['u_df']}:"
+                  f"{self._mcol(self.horizon)}{self.val['u_df']}")
+        r = self._vrow(ws, r, "EPV enterprise value = NOPAT × (Σ df + "
+                              "df_N / terminal WACC) (maintenance capex = "
+                              "D&A, flat working capital — D&A cancels)",
                        "ev_epv",
                        f'=IF({V["epv_ebit"]}<=0,"unavailable — negative '
                        f'normalized earnings (see Methodology)",'
-                       f"{V['epv_nopat']}/{V['wacc']}"
-                       f"*POWER(1+{V['wacc']},1-{t1}))")
+                       f"{V['epv_nopat']}*(SUM({df_rng})"
+                       f"+{self.df_last}/{V['wacc_t']}))")
         r += 1
         return r, f"={V['ev_epv']}"
 
@@ -887,6 +900,16 @@ class _Writer:
                        f"={V['mcap']}/({V['mcap']}+{V['debt']})", FMT_PCT)
         r = self._vrow(ws, r, "WACC", "wacc",
                        f"={V['we']}*{V['ke']}+(1-{V['we']})*{V['kd_at']}",
+                       FMT_PCT, bold=True)
+        # Terminal beta convergence (owner-approved 2026-08-17): β fades
+        # linearly to terminal_beta by the final explicit year; the stable
+        # period — and every perpetuity denominator — runs at the terminal
+        # WACC. Only the equity-risk component converges.
+        r = self._vrow(ws, r, "Terminal cost of equity = rf + β_T × ERP",
+                       "ke_t", "=risk_free+terminal_beta*erp", FMT_PCT)
+        r = self._vrow(ws, r, "Terminal WACC (stable period — every "
+                              "perpetuity's rate)", "wacc_t",
+                       f"={V['we']}*{V['ke_t']}+(1-{V['we']})*{V['kd_at']}",
                        FMT_PCT, bold=True)
         r += 1
 
@@ -944,14 +967,34 @@ class _Writer:
                            f"-{self._mcol(i)}{self.val['u_dnwc']}", FMT_M, True)
         r = urow(r, "Discount exponent t", "t",
                  lambda i: f"={i}-{V['stub']}-IF(midyear,0.5,0)", FMT_NUM)
+        # Beta convergence path: per-year beta → per-year WACC → CUMULATIVE
+        # discount factor (each segment compounds at its own year's rate).
+        # A flat path (terminal_beta = beta) reproduces POWER(1+WACC,−t)
+        # exactly — the engine's tested reduction invariant, live in cells.
+        n1 = max(self.horizon - 1, 1)
+        r = urow(r, "Beta path (linear fade to terminal beta)", "beta",
+                 lambda i: f"=beta+{i - 1}/{n1}*(terminal_beta-beta)", FMT_NUM)
+        r = urow(r, "WACC path (equity leg converges; Kd and weights held)",
+                 "wacc",
+                 lambda i: f"={V['we']}*(risk_free+{self._mcol(i)}"
+                           f"{self.val['u_beta']}*erp)"
+                           f"+(1-{V['we']})*{V['kd_at']}", FMT_PCT)
+        df_row = r                    # urow registers after evaluating — the
+        r = urow(r, "Discount factor (cumulative along the path)", "df",
+                 lambda i: (           # chain needs its own row number early
+                     f"=POWER(1+{self._mcol(i)}{self.val['u_wacc']},"
+                     f"-{self._mcol(i)}{self.val['u_t']})" if i == 1 else
+                     f"={self._mcol(i - 1)}{df_row}"
+                     f"*POWER(1+{self._mcol(i)}{self.val['u_wacc']},"
+                     f"-({self._mcol(i)}{self.val['u_t']}"
+                     f"-{self._mcol(i - 1)}{self.val['u_t']}))"), FMT_NUM)
         r = urow(r, "PV of UFCF", "pv",
                  lambda i: f"={self._mcol(i)}{self.val['u_ufcf']}"
-                           f"*POWER(1+{V['wacc']},"
-                           f"-{self._mcol(i)}{self.val['u_t']})")
+                           f"*{self._mcol(i)}{self.val['u_df']}")
         self.ufcf_rng = (f"Valuation!$C${self.val['u_ufcf']}:"
                          f"${self._mcol(self.horizon)}${self.val['u_ufcf']}")
-        self.t_rng = (f"Valuation!$C${self.val['u_t']}:"
-                      f"${self._mcol(self.horizon)}${self.val['u_t']}")
+        self.df_last = (f"Valuation!${self._mcol(self.horizon)}"
+                        f"${self.val['u_df']}")
         r = self._vrow(ws, r, "PV of explicit years (sum)", "pv_explicit",
                        f"=SUM(C{self.val['u_pv']}:"
                        f"{self._mcol(self.horizon)}{self.val['u_pv']})",
@@ -985,7 +1028,7 @@ class _Writer:
                        f"{V['tv_gordon']}/{V['ebitda5']},\"n/a\")", FMT_X)
         r = self._vrow(ws, r, "Your exit multiple implies terminal g of",
                        "implied_g",
-                       f"=IF(ISNUMBER({V['tv_exit']}),{V['wacc']}"
+                       f"=IF(ISNUMBER({V['tv_exit']}),{V['wacc_t']}"
                        f"-{V['nopat6']}*(1-{V['rr']})/{V['tv_exit']},\"n/a\")",
                        FMT_PCT)
         r += 1
@@ -1095,6 +1138,54 @@ class _Writer:
         offsets = GRID_OFFSETS                # WACC rows / multiple cols
         r = 3
 
+        # ── shifted discount factors, one row per WACC offset ───────────────
+        # The WACC axis is a PARALLEL shift of the whole rate path including
+        # the terminal rate (beta convergence, owner-approved 2026-08-17);
+        # each row chains the same cumulative product as the Valuation df row
+        # at the shifted per-year rates. Both grids read these rows. The last
+        # extra column is the factor at the exit exponent tN (terminal-rate
+        # tail beyond the final flow).
+        self._header(ws, r, "DISCOUNT FACTORS — per WACC row "
+                            "(parallel shift of the whole rate path)",
+                     span=3 + self.horizon)
+        r += 1
+        last = self._mcol(self.horizon)
+        exit_col = self._mcol(self.horizon + 1)
+        last_t = f"Valuation!${last}${self.val['u_t']}"
+        for i in range(1, self.horizon + 1):
+            ws.cell(row=r, column=2 + i, value=f"y{i}").font = \
+                Font(color=GRAY, size=9)
+        ws.cell(row=r, column=3 + self.horizon, value="exit tN").font = \
+            Font(color=GRAY, size=9)
+        r += 1
+        df_rows: list[int] = []
+        for k, off in enumerate(offsets):
+            row = r + k
+            wc = ws.cell(row=row, column=1,
+                         value=f"={V['wacc']}+({off})*{WACC_STEP}")
+            wc.number_format = FMT_PCT
+            wc.font = Font(color=GRAY, size=9)
+            for i in range(1, self.horizon + 1):
+                col = self._mcol(i)
+                w_i = (f"(Valuation!{col}${self.val['u_wacc']}"
+                       f"+({off})*{WACC_STEP})")
+                t_i = f"Valuation!{col}${self.val['u_t']}"
+                if i == 1:
+                    f = f"=POWER(1+{w_i},-{t_i})"
+                else:
+                    prev = self._mcol(i - 1)
+                    t_prev = f"Valuation!{prev}${self.val['u_t']}"
+                    f = (f"={prev}{row}*POWER(1+{w_i},"
+                         f"-({t_i}-{t_prev}))")
+                ws.cell(row=row, column=1 + i + 1, value=f).number_format = \
+                    FMT_NUM
+            ws.cell(row=row, column=3 + self.horizon,
+                    value=(f"={last}{row}*POWER(1+({V['wacc_t']}"
+                           f"+({off})*{WACC_STEP}),"
+                           f"-({V['tn']}-{last_t}))")).number_format = FMT_NUM
+            df_rows.append(row)
+        r += len(offsets) + 1
+
         if "wacc_x_g" in self.m.sensitivity:
             self._header(ws, r, "VALUE PER SHARE — WACC × terminal g", span=10)
             r += 1
@@ -1107,27 +1198,29 @@ class _Writer:
                 c.font = Font(bold=True)
             helper_start = head + 8
             n6_row, ufcf_rows = self._g_helpers(ws, helper_start, head)
-            last = self._mcol(self.horizon)
             for i, off in enumerate(offsets):
                 wr = head + 1 + i
                 wc = ws.cell(row=wr, column=1,
                              value=f"={V['wacc']}+({off})*{WACC_STEP}")
                 wc.number_format = FMT_PCT
                 wc.font = Font(bold=True)
+                # the perpetuity guard and denominator use the SHIFTED
+                # TERMINAL rate; explicit years use this row's df chain
+                wt = f"({V['wacc_t']}+({off})*{WACC_STEP})"
+                dfr = df_rows[i]
                 for j in range(len(G_OFFSETS)):
                     g = f"{get_column_letter(2 + j)}${head}"
-                    w = f"$A{wr}"
                     u = ufcf_rows[j]
                     n6 = f"{get_column_letter(2 + j)}${n6_row}"
                     roic = (f'IF(OR(terminal_roic="",terminal_roic<={g}),'
-                            f"{w},IF(terminal_roic_fade,"
-                            f"(terminal_roic+{w})/2,terminal_roic))")
+                            f"{wt},IF(terminal_roic_fade,"
+                            f"(terminal_roic+{wt})/2,terminal_roic))")
                     formula = (
-                        f'=IF({g}>={w},"—",'
-                        f"(SUMPRODUCT($C${u}:${last}${u},POWER(1+{w},"
-                        f"-{self.t_rng}))"
-                        f"+{n6}*(1-{g}/{roic})/({w}-{g})"
-                        f"*POWER(1+{w},-{V['exp_gordon']})"
+                        f'=IF({g}>={wt},"—",'
+                        f"(SUMPRODUCT($C${u}:${last}${u},"
+                        f"$C${dfr}:${last}${dfr})"
+                        f"+{n6}*(1-{g}/{roic})/({wt}-{g})"
+                        f"*${last}${dfr}"
                         f"+{V['bridge_adj']})/share_count)")
                     c = ws.cell(row=wr, column=2 + j, value=formula)
                     c.number_format = FMT_PS
@@ -1158,13 +1251,13 @@ class _Writer:
                              value=f"={V['wacc']}+({off})*{WACC_STEP}")
                 wc.number_format = FMT_PCT
                 wc.font = Font(bold=True)
+                dfr = df_rows[i]
                 for j in range(5):
                     mlt = f"{get_column_letter(2 + j)}${head}"
-                    w = f"$A{wr}"
                     formula = (
-                        f"=(SUMPRODUCT({self.ufcf_rng},POWER(1+{w},"
-                        f"-{self.t_rng}))"
-                        f"+{mlt}*{V['ebitda5']}*POWER(1+{w},-{V['tn']})"
+                        f"=(SUMPRODUCT({self.ufcf_rng},"
+                        f"$C${dfr}:${last}${dfr})"
+                        f"+{mlt}*{V['ebitda5']}*${exit_col}${dfr}"
                         f"+{V['bridge_adj']})/share_count")
                     c = ws.cell(row=wr, column=2 + j, value=formula)
                     c.number_format = FMT_PS

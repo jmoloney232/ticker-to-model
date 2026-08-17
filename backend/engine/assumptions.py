@@ -310,6 +310,17 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs,
         add("beta", 1.0, "FALLBACK: market-average beta — price history too short "
                          "or benchmark unavailable (see warnings); override "
                          "recommended", unit="x")
+    beta_now = market.beta.adjusted if market.beta is not None else 1.0
+    add("terminal_beta", (beta_now + 1.0) / 2,
+        "Stable-period beta = midpoint(current beta, 1.0) — half the "
+        "deviation from market risk persists in perpetuity (owner-approved "
+        "2026-08-17; docs/proposals/terminal-beta-convergence.md). A mature "
+        "firm in perpetuity is a diversified claim on the economy, and a 2y "
+        "regression beta is an estimate of present conditions, not a "
+        "permanent property; Blume's evidence is PARTIAL convergence, and "
+        "full convergence (set 1.0 here) prices half-century-observed "
+        "low-risk franchises as average. β fades linearly to this value by "
+        "the final explicit year; the perpetuity runs at it", unit="x")
     add("erp", ERP, "Equity risk premium — 4.5–6% all defensible; 5% mid-range",
         unit="rate")
     add("risk_free", rf,
@@ -435,13 +446,13 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs,
     # binds, the derivation says so and dcf warns. Presets and user
     # overrides layer on top and are warned in-band, never clamped.
     from .wacc import build_wacc  # lazy: wacc.py imports this module
-    wacc_now = build_wacc(history, market, out).wacc
+    wacc_t = build_wacc(history, market, out).terminal_wacc
     g_field = out.fields["terminal_growth"]
-    ceiling = wacc_now - TERMINAL_SPREAD_FLOOR
+    ceiling = wacc_t - TERMINAL_SPREAD_FLOOR
     if g_field.value is not None and g_field.value > ceiling:
         g_field.derivation = (
             f"{g_field.derivation} — CLAMPED by the terminal spread floor: "
-            f"WACC ({wacc_now:.2%}) − {TERMINAL_SPREAD_FLOOR:.0%} = "
+            f"terminal WACC ({wacc_t:.2%}) − {TERMINAL_SPREAD_FLOOR:.0%} = "
             f"{ceiling:.2%} (a smaller spread is inside the estimate's own "
             "uncertainty; methodology: terminal_spread_floor)")
         g_field.value = ceiling

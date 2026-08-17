@@ -101,7 +101,49 @@ conventions:
       zero; 2y keeps recency (Bloomberg default; Damodaran uses 5y monthly). Blume
       adjustment anticipates mean reversion. Disclosed limitation: a regression beta
       embeds current leverage — projections that change capital structure make it
-      silently inconsistent (unlever/relever is a v2 extension).
+      silently inconsistent (unlever/relever is a v2 extension). Terminal beta
+      convergence (see terminal_beta_convergence) makes the valuation LESS
+      sensitive to this estimation window — the stable-period rate is dominated
+      by the convergence target — which softens the short-window critique
+      without relitigating the choice. The composition is stated openly:
+      Blume shrinks estimation error now (⅓ toward 1); the terminal midpoint
+      models economic maturation in perpetuity (half the remaining gap) — a
+      bounded, disclosed partial double-count of the same mean-reversion
+      phenomenon addressing two different things.
+
+  - id: terminal_beta_convergence
+    label: Terminal beta convergence (time-varying discount rate)
+    category: wacc
+    default: "Beta fades linearly from the current estimate to terminal_beta = midpoint(β, 1.0) by the final explicit year; every perpetuity (Gordon TV, EPV's stable phase) capitalizes at the terminal WACC; explicit-year flows discount along the per-year path via a cumulative factor. Weights, Kd, rf, and ERP are held — only the equity-risk component converges"
+    derivation: >
+      A mature firm in perpetuity is a diversified claim on the economy, and
+      a 2-year regression beta is an estimate of present conditions, not a
+      permanent property (Damodaran's stable-growth convention brackets
+      terminal beta 0.8–1.2). Midpoint rather than full 1.0 because Blume's
+      evidence is PARTIAL convergence and full convergence pushed
+      half-century-observed low-risk franchises (PG, PEP, CL, KO) 30–40%
+      below market in the pre-measurement — an assertion the evidence does
+      not support; midpoint also matches the terminal_roic_fade precedent
+      and adds no free parameter. Owner-approved 2026-08-17
+      (docs/proposals/terminal-beta-convergence.md, with the exact
+      pre-measurement). Commissioned by the structural-bias re-measurement:
+      gap-to-market correlated −0.49 with WACC and −0.39 with beta after
+      every prior fix, and both worsened inside the compounder cohort —
+      the cost of capital was the largest documented structural bias.
+    editable: true
+    tradeoff: >
+      Rate structure per surface: explicit years at the per-year path
+      (cumulative discount factor, visible row in the workbook); both
+      terminal legs discounted along the path with the Gordon denominator
+      at the terminal WACC; EPV inherits the full two-phase structure —
+      anything else would break the tested g = 0 DCF → EPV convergence and
+      make the value-of-growth line a cross-rate-structure comparison. The
+      sensitivity grids' WACC axis is a parallel shift of the entire path
+      including the terminal rate. The g ≥ WACC hard block and the
+      terminal spread floor both bind on the TERMINAL rate — the
+      denominator they police. Setting terminal_beta equal to the current
+      beta reproduces the single-WACC model exactly (tested reduction
+      invariant).
 
   - id: cost_of_debt
     label: Cost of debt
@@ -191,7 +233,7 @@ conventions:
     label: Terminal spread floor (WACC − g ≥ 2%)
     category: terminal_value
     floor: 0.02
-    default: "The DERIVED terminal-growth default is clamped to WACC − 2% (a no-op for every current filer); user or preset values inside the band draw the terminal_spread_thin warning naming the implied terminal multiple — warned, never clamped; g ≥ WACC stays hard-blocked"
+    default: "The DERIVED terminal-growth default is clamped to TERMINAL WACC − 2% (a no-op for every current filer); user or preset values inside the band draw the terminal_spread_thin warning naming the implied terminal multiple — warned, never clamped; g ≥ terminal WACC stays hard-blocked. Under beta convergence the floor binds on the terminal rate — the perpetuity denominator it polices"
     derivation: >
       Two non-market anchors (docs/proposals/terminal-spread-floor.md,
       owner-approved 2026-08-17): the model's own noise floor — beta standard
@@ -717,19 +759,22 @@ conventions:
   - id: epv_method
     label: Earnings Power Value (EPV)
     category: valuation
-    default: "EPV enterprise value = FY0 revenue × normalized EBIT margin × (1 − marginal tax) ÷ WACC, timed like a flat perpetuity whose first flow sits at the first forecast midpoint (same mid-year/stub machinery as the DCF)"
+    default: "EPV enterprise value = FY0 revenue × normalized EBIT margin × (1 − marginal tax), as a FLAT stream discounted along the same beta-convergence rate path as the DCF: the explicit window as an annuity of the discount-factor row, the stable period capitalized at the terminal WACC (two-phase, owner-approved 2026-08-17; same mid-year/stub flow timing as the explicit years)"
     derivation: >
       Greenwald-style no-growth valuation: capitalize today's demonstrated
       earnings power at the cost of capital. The marginal tax rate is used —
       the same rate as terminal NOPAT and after-tax Kd — because a
       perpetuity should carry the ongoing rate, not a 3y effective rate that
-      embeds one-offs. EPV deliberately shares the DCF's WACC: the
-      comparison then isolates the growth and terminal assumptions but NOT
-      the cost-of-capital convention. A negative normalized EBIT makes EPV
-      unavailable with a reason (the same rule as the negative terminal
-      anchor). Property-tested invariant: a DCF with zero growth in every
-      year, zero terminal growth, capex equal to D&A, and flat working
-      capital converges to the EPV cell exactly.
+      embeds one-offs. EPV deliberately shares the DCF's FULL rate
+      structure, including terminal beta convergence: the regression beta
+      is an estimate of present conditions for EPV too, and any other rate
+      treatment would break the convergence invariant below and make
+      "value of growth = Gordon − EPV" a comparison across two different
+      rate structures. A negative normalized EBIT makes EPV unavailable
+      with a reason (the same rule as the negative terminal anchor).
+      Property-tested invariant: a DCF with zero growth in every year, zero
+      terminal growth, capex equal to D&A, and flat working capital
+      converges to the EPV cell exactly.
     editable: true
     tradeoff: >
       EPV embeds no view of the future, which is both its value (an anchor

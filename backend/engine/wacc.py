@@ -57,10 +57,28 @@ def build_wacc(history: FinancialHistory, market: MarketInputs,
     total = market_cap + debt
     we, wd = market_cap / total, debt / total
 
+    # Terminal beta convergence (owner-approved 2026-08-17): β fades linearly
+    # from beta_used (year 1) to terminal_beta (final explicit year); the
+    # stable period runs at terminal_beta. Only the equity-risk component
+    # converges — weights, Kd, rf, ERP are held (weights to avoid
+    # circularity; synthetic Kd is already a forward-looking marginal rate).
+    # year_rates[0] == wacc exactly: the path NESTS the single-rate model.
+    beta_t = (a.eff("terminal_beta") if a.has("terminal_beta")
+              else beta_used)
+    n = int(a.eff("forecast_years")) if a.has("forecast_years") else 1
+    year_betas = tuple(
+        beta_used + (i / (n - 1) if n > 1 else 1.0) * (beta_t - beta_used)
+        for i in range(n))
+    year_rates = tuple(we * (rf + b * erp) + wd * kd_after
+                       for b in year_betas)
+    terminal_wacc = we * (rf + beta_t * erp) + wd * kd_after
+
     return WaccBuild(
         risk_free=rf, erp=erp, beta_used=beta_used, beta_source=beta_source,
         cost_of_equity=ke, coverage=coverage, rating=rating, spread=spread,
         kd_method=kd_method, kd_pretax=kd_pretax, kd_after_tax=kd_after,
         marginal_tax=marginal, market_cap=market_cap, gross_debt=debt,
         weight_equity=we, weight_debt=wd, wacc=we * ke + wd * kd_after,
+        terminal_beta=beta_t, terminal_wacc=terminal_wacc,
+        year_betas=year_betas, year_rates=year_rates,
     )

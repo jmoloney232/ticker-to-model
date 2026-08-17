@@ -308,6 +308,13 @@ class TestEpvFieldContract:
                                 "embedded_debt_rate": 0.08}, {}),
         "share_count": ({}, {"share_count": 12.0}, {}),
         "cash_floor_pct": ({}, {"cash_floor_pct": 0.05}, {}),
+        # two-phase EPV (2026-08-17): the convergence target moves the
+        # terminal capitalization rate; the horizon moves EPV only when the
+        # path is non-flat (toy beta = 1 → flat), so pair it with a
+        # terminal_beta that bends the path
+        "terminal_beta": ({}, {"terminal_beta": 0.7}, {}),
+        "forecast_years": ({"terminal_beta": 0.8},
+                           {"terminal_beta": 0.8, "forecast_years": 10}, {}),
     }
 
     def test_every_listed_field_moves_epv(self):

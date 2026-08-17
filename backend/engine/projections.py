@@ -11,7 +11,6 @@ anyway (engine-bug tripwires).
 
 from __future__ import annotations
 
-import math
 from datetime import timedelta
 
 from ingest.models import FinancialHistory, FiscalPeriod
