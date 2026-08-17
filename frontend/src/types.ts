@@ -133,6 +133,9 @@ export interface ProfileInfo {
   primary: "compounder" | "mature" | "declining";
   modifiers: string[];
   reassigned: boolean;
+  auto_tag: string; // what auto classification produced (kept through reassignment)
+  blurbs: Record<string, string>; // server-owned one-liners per option
+  framing: string; // server-owned reassignment framing line
   notes: string[];
   measures: {
     cagr: number;

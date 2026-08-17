@@ -545,6 +545,32 @@ def _history_out(m: ModelResult) -> list[dict]:
     return out
 
 
+# One plain-English line per profile option (Part 3, owner spec 2026-08-17):
+# a finance student should be able to choose without the methodology page.
+# Server-owned copy — the frontend never invents these. The framing line is
+# a constraint, not decoration: reassignment is a deliberate methodology
+# change, never a dial for landing nearer the market price.
+PROFILE_BLURBS = {
+    "compounder": "Durable high growth with returns above the cost of "
+                  "capital: 10-year horizon, terminal growth at the "
+                  "10-year-Treasury ceiling.",
+    "mature": "Steady-state economics: 5-year horizon, terminal growth at "
+              "the conservative house cap.",
+    "declining": "Revenue below inflation and falling: terminal growth "
+                 "anchored to the company's own trajectory, median-margin "
+                 "normalization.",
+    "cyclical": "Margins swing and revenue has a down-year: full-cycle "
+                "averages replace the trailing 3 years.",
+    "reinvestment_heavy": "Capex well above depreciation: capex fades to a "
+                          "maintenance level by the final year instead of "
+                          "staying at the buildout rate.",
+}
+PROFILE_FRAMING = ("Reassigning applies that profile's documented "
+                   "derivation rules — a deliberate methodology change, "
+                   "recorded in every affected assumption's provenance. "
+                   "It is not a way to land nearer the market price.")
+
+
 def profile_out(m: ModelResult) -> dict | None:
     """The company profile with its measured trigger values — disclosed,
     never silent (owner spec). None when the profile layer was skipped."""
@@ -557,6 +583,9 @@ def profile_out(m: ModelResult) -> dict | None:
         "primary": prof.primary,
         "modifiers": list(prof.modifiers),
         "reassigned": prof.reassigned,
+        "auto_tag": prof.auto_tag or prof.tag,
+        "blurbs": PROFILE_BLURBS,
+        "framing": PROFILE_FRAMING,
         "notes": list(prof.notes),
         "measures": {
             "cagr": mm.cagr, "g_latest": mm.g_latest,

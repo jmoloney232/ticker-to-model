@@ -71,6 +71,17 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
       primary: "compounder",
       modifiers: ["reinvestment_heavy"],
       reassigned: false,
+      auto_tag: "compounder+reinvestment_heavy",
+      blurbs: {
+        compounder: "Durable high growth with returns above the cost of capital.",
+        mature: "Steady-state economics.",
+        declining: "Revenue below inflation and falling.",
+        cyclical: "Margins swing with a revenue down-year.",
+        reinvestment_heavy: "Capex well above depreciation.",
+      },
+      framing:
+        "Reassigning applies that profile's documented derivation rules — " +
+        "a deliberate methodology change, recorded in provenance.",
       notes: [],
       measures: {
         cagr: 0.137,

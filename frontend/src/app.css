@@ -1627,3 +1627,127 @@ button {
   border-color: var(--steel-deep);
   color: var(--steel-deep);
 }
+
+/* ── Part 3: lens navigation (owner spec 2026-08-17) ─────────────────── */
+
+.lens-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 7px 16px;
+  border-bottom: var(--hair) solid var(--line-soft);
+  font: var(--type-body-sm);
+  color: var(--text-2);
+}
+.lens-line .lens-item {
+  font-variant-numeric: tabular-nums;
+}
+.lens-line .lens-item + .lens-item::before {
+  content: "· ";
+  color: var(--text-3);
+}
+
+.preset-framing {
+  font: 400 9.5px/1.35 var(--font-body);
+  color: var(--text-3);
+  max-width: 200px;
+}
+
+.profile-options {
+  margin-top: 7px;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.popt {
+  flex: 1 1 0;
+  text-align: left;
+  padding: 6px 9px;
+  border: var(--hair) solid var(--line-soft);
+  background: none;
+}
+.popt.on {
+  border-color: var(--steel-deep);
+  background: var(--tint-selected);
+}
+.popt-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.popt-name {
+  font: 600 11px/1.5 var(--font-mono);
+  color: var(--text-1);
+}
+.popt.on .popt-name {
+  color: var(--steel-deep);
+}
+.popt-why {
+  display: block;
+  font: 400 9.5px/1.35 var(--font-body);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.mod-why {
+  font: 400 9.5px/1.35 var(--font-body);
+  color: var(--text-3);
+}
+.profile-framing {
+  margin-top: 6px;
+  font: 400 9.5px/1.35 var(--font-body);
+  color: var(--text-3);
+}
+
+.changes-band {
+  padding: 9px 16px 11px;
+  border-bottom: var(--hair) solid var(--line-mid);
+  background: var(--tint-band);
+}
+.changes-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.changes-cause {
+  font: 600 11.5px/1.4 var(--font-body);
+  color: var(--text-1);
+}
+.changes-x {
+  margin-left: auto;
+  font: 500 10px/1.6 var(--font-mono);
+  color: var(--steel-deep);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  border: 0;
+  background: none;
+}
+.changes-none {
+  margin-top: 4px;
+  font: var(--type-body-sm);
+  color: var(--text-3);
+}
+.changes-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 3px 18px;
+}
+.changes-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font: var(--type-body-sm);
+}
+.changes-label {
+  color: var(--text-2);
+}
+.changes-move {
+  font: 500 10.5px/1.6 var(--font-mono);
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

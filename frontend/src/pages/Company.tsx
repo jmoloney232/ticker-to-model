@@ -29,8 +29,18 @@ import { Sensitivity } from "../components/Sensitivity";
 import { reasonDetail, StateCard } from "../components/StateCard";
 import { ProjectionsTable } from "../components/Statements";
 import { SummaryCaveats } from "../components/SummaryCaveats";
+import {
+  diffAssumptions,
+  WhatChanged,
+  type ChangeRow,
+} from "../components/WhatChanged";
 import { fmtPrice } from "../format";
-import type { ModelBlocked, ModelOk, PresetInfo } from "../types";
+import type {
+  AssumptionRow,
+  ModelBlocked,
+  ModelOk,
+  PresetInfo,
+} from "../types";
 
 const DEBOUNCE_MS = 400;
 const TABS = ["summary", "model", "audit"] as const;
@@ -206,6 +216,41 @@ function TabBar({
   );
 }
 
+/* the current lens, always visible on Summary (owner spec 2026-08-17:
+   "the current selection is always visible, never a hidden default") */
+function LensLine({
+  presetTitle,
+  profile,
+  edits,
+  onModel,
+}: {
+  presetTitle: string;
+  profile: ModelOk["profile"];
+  edits: number;
+  onModel: () => void;
+}) {
+  return (
+    <div className="lens-line">
+      <span className="kicker">Lens</span>
+      <span className="lens-item">{presetTitle}</span>
+      {profile && (
+        <span className="lens-item">
+          profile {profile.tag.replace(/_/g, " ").replace(/\+/g, " + ")}
+          {profile.reassigned ? " · reassigned by you" : " · auto"}
+        </span>
+      )}
+      {edits > 0 && (
+        <span className="lens-item">
+          {edits} assumption{edits === 1 ? "" : "s"} edited
+        </span>
+      )}
+      <button type="button" className="viewlink" onClick={onModel}>
+        change in Model →
+      </button>
+    </div>
+  );
+}
+
 /* preset strip — Model tab (owner layout: Summary carries the answer) */
 function PresetStrip({
   presets,
@@ -223,10 +268,15 @@ function PresetStrip({
   return (
     <div className="preset-band">
       <div className="preset-band-meta">
-        <span className="kicker">Assumption presets</span>
+        <span className="kicker">Methodology lens</span>
         <span className="wacc-note">
           WACC {(wacc * 100).toFixed(2)}%
           {beta != null ? ` · β ${beta.toFixed(2)}` : ""}
+        </span>
+        <span className="preset-framing">
+          A preset applies a different published methodology, deliberately.
+          The market-implied lens shows what today&rsquo;s price embeds —
+          information, not a target.
         </span>
       </div>
       <div className="presets">
@@ -297,6 +347,19 @@ export function Company({ ticker }: { ticker: string }) {
   });
   const firstLoad = useRef(true);
   const [retryTick, setRetryTick] = useState(0);
+  /* what-changed (owner spec): a preset/profile switch diffs the previous
+     assumption rows against the new ones — set only by those two handlers,
+     never by ordinary overrides */
+  const [changes, setChanges] = useState<{
+    cause: string;
+    rows: ChangeRow[];
+  } | null>(null);
+  const pendingCause = useRef<string | null>(null);
+  const prevRows = useRef<AssumptionRow[] | null>(null);
+  const markSwitch = (cause: string) => {
+    pendingCause.current = cause;
+    prevRows.current = model?.assumptions ?? null;
+  };
 
   const setTab = (t: Tab) => {
     setTabState(t);
@@ -326,6 +389,9 @@ export function Company({ ticker }: { ticker: string }) {
     setPreset(null);
     setProfileTag(null);
     setOverrides({});
+    setChanges(null);
+    pendingCause.current = null;
+    prevRows.current = null;
     firstLoad.current = true;
     const code = new URLSearchParams(window.location.search).get("c");
     if (!code) {
@@ -363,6 +429,14 @@ export function Company({ ticker }: { ticker: string }) {
         .then((resp) => {
           setBusy(false);
           if (resp.status === "ok") {
+            if (pendingCause.current && prevRows.current) {
+              setChanges({
+                cause: pendingCause.current,
+                rows: diffAssumptions(prevRows.current, resp.assumptions),
+              });
+            }
+            pendingCause.current = null;
+            prevRows.current = null;
             setModel(resp);
             setBlocked(null);
             setFailed(null);
@@ -597,6 +671,15 @@ export function Company({ ticker }: { ticker: string }) {
           <>
             <EpvHero model={model} />
             <CheckBand checks={model.checks} />
+            <LensLine
+              presetTitle={
+                presets.find((p) => p.name === preset)?.title ??
+                "Derived defaults"
+              }
+              profile={model.profile}
+              edits={model.provenance_counts.user}
+              onModel={() => setTab("model")}
+            />
             <div className="verdict">
               <div className="kicker">Verdict</div>
               <p>{model.epv_verdict.text}</p>
@@ -639,6 +722,15 @@ export function Company({ ticker }: { ticker: string }) {
           <>
             <Hero model={model} />
             <CheckBand checks={model.checks} />
+            <LensLine
+              presetTitle={
+                presets.find((p) => p.name === preset)?.title ??
+                "Derived defaults"
+              }
+              profile={model.profile}
+              edits={model.provenance_counts.user}
+              onModel={() => setTab("model")}
+            />
             <div className="verdict">
               <div className="kicker">Verdict</div>
               <p>{model.verdict.text}</p>
@@ -718,8 +810,20 @@ export function Company({ ticker }: { ticker: string }) {
                 requested={profileTag}
                 onReassign={(tag) => {
                   setOverrideError(null);
+                  markSwitch(
+                    tag
+                      ? `profile reassigned to ${tag.replace(/_/g, " ")}`
+                      : "back to the auto classification",
+                  );
                   setProfileTag(tag);
                 }}
+              />
+            )}
+            {changes && (
+              <WhatChanged
+                cause={changes.cause}
+                rows={changes.rows}
+                onDismiss={() => setChanges(null)}
               />
             )}
             <div className="cols">
@@ -754,6 +858,11 @@ export function Company({ ticker }: { ticker: string }) {
                 requested={profileTag}
                 onReassign={(tag) => {
                   setOverrideError(null);
+                  markSwitch(
+                    tag
+                      ? `profile reassigned to ${tag.replace(/_/g, " ")}`
+                      : "back to the auto classification",
+                  );
                   setProfileTag(tag);
                 }}
               />
@@ -764,9 +873,18 @@ export function Company({ ticker }: { ticker: string }) {
               activePreset={preset}
               onPreset={(p) => {
                 setOverrideError(null);
+                const t = presets.find((x) => x.name === p)?.title;
+                markSwitch(p ? `preset “${t ?? p}”` : "back to derived defaults");
                 setPreset(p);
               }}
             />
+            {changes && (
+              <WhatChanged
+                cause={changes.cause}
+                rows={changes.rows}
+                onDismiss={() => setChanges(null)}
+              />
+            )}
             {modelDensity}
             <ProjectionsTable rows={model.projections} />
           </>

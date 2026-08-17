@@ -59,7 +59,10 @@ export function ProfileBand({
           {profile.tag.replace(/_/g, " ").replace(/\+/g, " + ")}
         </span>
         {profile.reassigned && (
-          <span className="profile-reassigned">reassigned by you</span>
+          <span className="profile-reassigned">
+            reassigned by you · auto:{" "}
+            {profile.auto_tag.replace(/_/g, " ").replace(/\+/g, " + ")}
+          </span>
         )}
       </div>
       <div className="profile-meta">
@@ -72,31 +75,44 @@ export function ProfileBand({
           </span>
         ))}
       </div>
-      <div className="profile-controls" role="group" aria-label="Reassign profile">
+      <div className="profile-options" role="group" aria-label="Reassign profile">
         {PRIMARIES.map((p) => (
           <button
             key={p}
             type="button"
-            className={`pseg${profile.primary === p ? " on" : ""}`}
+            className={`popt${profile.primary === p ? " on" : ""}`}
             aria-pressed={profile.primary === p}
             onClick={() => {
               if (profile.primary !== p) setPrimary(p);
             }}
           >
-            {p}
+            <span className="popt-head">
+              <span className="preset-glyph">
+                {profile.primary === p ? "●" : "○"}
+              </span>
+              <span className="popt-name">{p}</span>
+            </span>
+            <span className="popt-why">{profile.blurbs?.[p] ?? ""}</span>
           </button>
         ))}
-        <span className="psep" />
+      </div>
+      <div className="profile-controls" role="group" aria-label="Modifiers">
         {MODIFIERS.map(([mod, label]) => (
           <button
             key={mod}
             type="button"
             className={`pseg mod${profile.modifiers.includes(mod) ? " on" : ""}`}
             aria-pressed={profile.modifiers.includes(mod)}
+            title={profile.blurbs?.[mod] ?? ""}
             onClick={() => toggleModifier(mod)}
           >
             +{label}
           </button>
+        ))}
+        {profile.modifiers.map((mod) => (
+          <span key={mod} className="mod-why">
+            {profile.blurbs?.[mod] ?? ""}
+          </span>
         ))}
         {requested != null && (
           <button
@@ -104,10 +120,11 @@ export function ProfileBand({
             className="pseg reset"
             onClick={() => onReassign(null)}
           >
-            back to auto
+            back to auto ({profile.auto_tag.replace(/_/g, " ")})
           </button>
         )}
       </div>
+      <div className="profile-framing">{profile.framing}</div>
     </div>
   );
 }

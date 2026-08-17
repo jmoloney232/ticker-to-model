@@ -527,7 +527,8 @@ def _classify_and_apply(a: Assumptions, history: FinancialHistory,
     else:
         primary, mods = parse_profile(requested)
         prof = Profile(primary=primary, modifiers=mods, measures=measures,
-                       reassigned=True, notes=auto.notes)
+                       reassigned=True, notes=auto.notes,
+                       auto_tag=auto.tag)
     _apply_profile(a, prof, history, market)
     a.profile = prof
 

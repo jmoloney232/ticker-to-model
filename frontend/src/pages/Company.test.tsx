@@ -135,7 +135,7 @@ describe("company profile", () => {
     expect(screen.getByText("compounder + reinvestment heavy")).toBeTruthy();
     expect(screen.getByText(/revenue CAGR 13\.7%/)).toBeTruthy();
     // reassign primary to mature — modifiers survive; posts the tag
-    fireEvent.click(screen.getByRole("button", { name: "mature" }));
+    fireEvent.click(screen.getByRole("button", { name: /mature/ }));
     await waitFor(() => {
       const posts = stub.calls.filter((c) => c.url.includes("/api/model/"));
       const last = posts[posts.length - 1].body as { profile?: string };
@@ -298,5 +298,32 @@ describe("the DCF/EPV view split", () => {
     fireEvent.click(screen.getByRole("radio", { name: /^dcf/i }));
     expect(window.location.search).not.toContain("view=epv");
     expect(screen.getByText(/Microsoft is worth \$281 a share/)).toBeTruthy();
+  });
+});
+
+describe("lens navigation (owner spec 2026-08-17)", () => {
+  it("keeps the current lens visible on Summary — never a hidden default", async () => {
+    vi.stubGlobal("fetch", stubFetch(modelOk()).fn);
+    render(<Company ticker="MSFT" />);
+    await waitFor(() => expect(screen.getByText("Lens")).toBeTruthy());
+    expect(screen.getByText("Derived defaults")).toBeTruthy();
+    expect(
+      screen.getByText(/profile compounder \+ reinvestment heavy · auto/),
+    ).toBeTruthy();
+  });
+
+  it("shows the what-changed band after a profile switch", async () => {
+    const stub = stubFetch(modelOk());
+    vi.stubGlobal("fetch", stub.fn);
+    render(<Company ticker="MSFT" />);
+    await waitFor(() => expect(screen.getByRole("tab", { name: /model/i })).toBeTruthy());
+    fireEvent.click(screen.getByRole("tab", { name: /model/i }));
+    fireEvent.click(screen.getByRole("button", { name: /mature/ }));
+    await waitFor(() => expect(screen.getByText("What changed")).toBeTruthy());
+    expect(screen.getByText(/profile reassigned to mature/)).toBeTruthy();
+    // stub returns the identical model → the empty-diff sentence, honestly
+    expect(screen.getByText(/No assumption moved/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+    expect(screen.queryByText("What changed")).toBeNull();
   });
 });

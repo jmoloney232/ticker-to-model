@@ -54,6 +54,16 @@ Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
 
 ## Decision log (recent additions)
 
+- **Preset/profile navigation (owner, 2026-08-17):** two distinct controls on
+  the Model tab — methodology lens (preset cards with rationales + framing:
+  market-implied is information, not a target) and company profile (blurbed
+  primary cards, modifier chips, reassignment with `auto_tag` kept so
+  provenance shows both). Switching either renders a **what-changed** panel
+  (client-side diff of the server's assumption rows, from → to; empty diffs
+  say so plainly). A **lens line** on Summary keeps the current selection
+  always visible. All server-owned copy (`PROFILE_BLURBS`/`PROFILE_FRAMING`
+  in app/serialize.py); share codes and the workbook already carried both.
+
 - **Terminal beta convergence (owner, 2026-08-17):** β fades linearly from the
   Blume-adjusted current estimate to `terminal_beta` = midpoint(β, 1.0) by the
   final explicit year; explicit flows discount along the per-year WACC path

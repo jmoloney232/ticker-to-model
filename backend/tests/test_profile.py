@@ -240,10 +240,20 @@ class TestProfileApi:
         assert auto["profile"]["reassigned"] is False
         assert auto["profile"]["measures"]["cagr"] > 0.08
 
+        # Part 3 (owner spec 2026-08-17): one plain-English line per option,
+        # server-owned; the framing line refuses the price-hunting reading
+        assert set(auto["profile"]["blurbs"]) == {
+            "compounder", "mature", "declining",
+            "cyclical", "reinvestment_heavy"}
+        assert "not a way to land nearer the market price" in \
+            auto["profile"]["framing"]
+
         re = client.post("/api/model/MSFT",
                          json={"profile": "mature"}).json()
         assert re["profile"]["tag"] == "mature"
         assert re["profile"]["reassigned"] is True
+        # the auto classification survives a reassignment — both are visible
+        assert re["profile"]["auto_tag"] == "compounder+reinvestment_heavy"
         rows = {a["name"]: a for a in re["assumptions"]}
         assert rows["forecast_years"]["value"] == 5
         # reassignment travels in the share code and reproduces the screen

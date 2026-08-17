@@ -73,6 +73,10 @@ class Profile:
     measures: ProfileMeasures
     reassigned: bool = False              # user overrode the classification
     notes: tuple[str, ...] = field(default=())   # measurement caveats
+    auto_tag: str = ""                    # what auto classification produced —
+    #                                       kept through a reassignment so the
+    #                                       provenance shows both (Part 3,
+    #                                       owner spec 2026-08-17)
 
     @property
     def tag(self) -> str:
@@ -118,8 +122,9 @@ def classify(m: ProfileMeasures) -> Profile:
                 f"{CAPEX_DA_CAP:.0f}× sanity cap — depreciation base treated "
                 "as unreliable, reinvestment-heavy withheld")
 
+    auto = f"{primary}" + "".join(f"+{x}" for x in modifiers)
     return Profile(primary=primary, modifiers=tuple(modifiers),
-                   measures=m, notes=tuple(notes))
+                   measures=m, notes=tuple(notes), auto_tag=auto)
 
 
 def parse_profile(tag: str) -> tuple[str, tuple[str, ...]]:
