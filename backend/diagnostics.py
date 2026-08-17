@@ -8,6 +8,11 @@ market payloads cache to .scan_cache.sqlite so re-runs are offline.
 Usage:
     set -a; source ../.env; set +a
     python -m diagnostics [--out results.json] [--tickers MSFT KO ...]
+    python -m diagnostics --bias        # two-arm structural-bias panels
+    python -m diagnostics --levels      # level decomposition: how much of
+                                        # the median gap each global constant
+                                        # explains, with the discriminating-
+                                        # power panel per hypothetical arm
 """
 
 from __future__ import annotations
@@ -128,6 +133,200 @@ def bias_panel(rows: list[dict], label: str) -> dict:
     return out
 
 
+# ── Level decomposition (owner item 1, 2026-08-17) ───────────────────────────
+# The bias rounds measured whether the gap is PREDICTABLE from company
+# characteristics; this measures the LEVEL — how much of the median gap each
+# global constant explains, individually and in combination. Hypothetical
+# arms only: every arm is an override run, no convention changes. The market
+# price stays a comparison point, never a target — arms are chosen from
+# published methodology alternatives, never from what closes the gap.
+
+TAIL = 0.10          # a tail is "populated" when gaps beyond ±10% exist there
+
+
+def power_panel(rows: list[dict], label: str, key: str = "gap") -> dict:
+    """Discriminating-power metric (owner spec): a model that reads below
+    market on nearly every name gives a ranking but no threshold. Reported
+    per arm: above/below split, median, IQR, and whether both tails hold
+    names beyond ±10%."""
+    gaps = sorted(r[key] for r in rows if r.get(key) is not None)
+    n = len(gaps)
+    if n == 0:
+        return {"label": label, "n": 0}
+    median = gaps[n // 2] if n % 2 else (gaps[n // 2 - 1] + gaps[n // 2]) / 2
+    q1, q3 = gaps[n // 4], gaps[(3 * n) // 4]
+    above = sum(1 for g in gaps if g > 0)
+    hi = sum(1 for g in gaps if g >= TAIL)
+    lo = sum(1 for g in gaps if g <= -TAIL)
+    out = {"label": label, "n": n, "median_gap": median, "iqr": (q1, q3),
+           "above": above, "share_above": above / n,
+           "tail_hi": hi, "tail_lo": lo}
+    print(f"  {label:<26} median {median:+.0%}  IQR [{q1:+.0%},{q3:+.0%}] "
+          f"width {q3 - q1:.0%}  above {above}/{n} ({above / n:.0%})  "
+          f"tails +{hi}/-{lo}")
+    return out
+
+
+def _levels_ticker(ticker: str, edgar, provider) -> dict | None:
+    """Base model plus every hypothetical arm for one filer. Returns None
+    when the filer doesn't build or Gordon is honestly unavailable."""
+    from engine.dcf import build_model as bm
+    history = build_financial_history(ticker, edgar)
+    market = build_market_inputs(ticker, provider, as_of=VALUATION_DATE)
+
+    def gordon(overrides=None):
+        m = bm(history, market, valuation_date=VALUATION_DATE,
+               overrides=overrides or None)
+        return (m, m.bridges["gordon"].value_per_share
+                if "gordon" in m.bridges else None)
+
+    base, base_ps = gordon()
+    if base_ps is None:
+        return None
+    price = market.price.value
+    a = base.assumptions
+    rf = a.eff("risk_free")
+    primary = a.profile.primary
+
+    # The g-ceiling arm lifts the 2.5% house cap to the published g ≤ 10Y
+    # ceiling for MATURE filers only: compounders already default to rf
+    # (no-op), and a declining filer's g is anchored to its own trajectory
+    # deliberately — lifting it would undo a different, correct rule.
+    def g_lift(w_t: float) -> dict:
+        target = min(rf, w_t - 0.005)
+        if primary == "mature" and target > a.eff("terminal_growth"):
+            return {"terminal_growth": target}
+        return {}
+
+    ARMS: dict[str, dict] = {
+        "erp_433": {"erp": 0.0433},
+        "g_ceiling_rf": g_lift(base.wacc.terminal_wacc),
+        "sbc_addback": {"sbc_addback": True},
+        "tax_21": {"marginal_tax": 0.21},
+        "no_reinv_haircut": {"terminal_roic": 2.0},
+        "capex_fade_all": {"capex_fade": True},
+    }
+    # ERP grid for the item-2 effects table (values argued in the proposal
+    # from published methodology, never chosen for their gap effect)
+    for name, erp in (("erp_400", 0.040), ("erp_460", 0.046),
+                      ("erp_550", 0.055)):
+        ARMS[name] = {"erp": erp}
+    # the compounding pair: lower discount rate x higher terminal growth —
+    # g must respect the ERP arm's OWN terminal WACC
+    probe, _ = gordon({"erp": 0.0433})
+    pair = {"erp": 0.0433, **g_lift(probe.wacc.terminal_wacc)}
+    ARMS["erp_g_pair"] = pair
+    ARMS["stack"] = {**pair, "sbc_addback": True, "marginal_tax": 0.21,
+                     "terminal_roic": 2.0, "capex_fade": True}
+
+    row = {"ticker": ticker, "price": price, "profile": a.profile.tag,
+           "gap": base_ps / price - 1, "base_ps": base_ps}
+    for name, ov in ARMS.items():
+        _, ps = gordon(ov) if ov else (None, base_ps)
+        row[name] = ps / price - 1 if ps is not None else None
+
+    # EPV surface: maintenance capex = D&A is the constant; the published
+    # alternative is maintenance = depreciation only (amortization of
+    # acquired intangibles is not a cash reinvestment need). EV scales by
+    # (nopat + amort0)/nopat under identical two-phase timing — computed
+    # arithmetically, no engine change.
+    epv = base.bridges.get("epv")
+    fy0 = history.periods[-1]
+    nopat = (fy0.value("revenue") * a.eff("epv_margin")
+             * (1 - a.eff("marginal_tax")))
+    if epv is not None and epv.value_per_share is not None:
+        amort0 = fy0.value("amortization_intangibles", 0.0)
+        row["gap_epv"] = epv.value_per_share / price - 1
+        if nopat > 0:
+            dps = amort0 * (epv.enterprise_value / nopat) / a.eff("share_count")
+            row["epv_maint_dep_only"] = (epv.value_per_share + dps) / price - 1
+
+    # Expensed R&D (missing feature, estimate only): 5y straight-line
+    # capitalization. ΔEBIT0 = R&D0 − mean(history) ≈ amortization lag on a
+    # growing program. EPV face: earnings-power understated by the growth
+    # portion of R&D → uplift = ΔEBIT0·(1−t) capitalized on EPV's own
+    # timing. DCF face: FCFF changes only by the tax-timing term
+    # −t·(R&D−amort) — capitalization is mostly reclassification there.
+    rnd = [p.value("research_and_development", 0.0) for p in history.periods]
+    rev0 = history.periods[-1].value("revenue")
+    if rnd[-1] / rev0 >= 0.05:
+        d_ebit = rnd[-1] - sum(rnd) / len(rnd)
+        row["rnd_pct_rev"] = rnd[-1] / rev0
+        row["rnd_d_ebit"] = d_ebit
+        t = a.eff("marginal_tax")
+        if epv is not None and epv.value_per_share is not None and nopat > 0:
+            up = (d_ebit * (1 - t) * (epv.enterprise_value / nopat)
+                  / a.eff("share_count"))
+            row["rnd_epv_uplift_ps"] = up
+            row["rnd_epv_uplift_vs_price"] = up / price
+        # per-year FCFF flow effect (not a PV): the DCF face of
+        # capitalization is this small negative tax-timing term
+        row["rnd_dcf_tax_timing_flow_ps"] = -t * d_ebit / a.eff("share_count")
+    return row
+
+
+def run_levels(tickers, edgar, provider, out_path=None) -> None:
+    rows, failures = [], []
+    for t in tickers:
+        try:
+            r = _levels_ticker(t, edgar, provider)
+            if r is None:
+                failures.append((t, "gordon unavailable"))
+            else:
+                rows.append(r)
+                print(f"{t:<6} base {r['gap']:+.0%}  stack {r['stack']:+.0%}")
+        except (IngestError, MarketDataError, Exception) as exc:  # noqa: BLE001
+            failures.append((t, f"{type(exc).__name__}: {str(exc)[:90]}"))
+            print(f"{t:<6} FAILED {type(exc).__name__}: {str(exc)[:90]}")
+
+    print(f"\n== Level decomposition, n={len(rows)} "
+          f"(fail/unavailable: {len(failures)}) ==")
+    panels = {"base": power_panel(rows, "base (shipped defaults)")}
+    order = ["erp_400", "erp_433", "erp_460", "erp_550", "g_ceiling_rf",
+             "sbc_addback", "tax_21", "no_reinv_haircut", "capex_fade_all",
+             "erp_g_pair", "stack"]
+    for arm in order:
+        panels[arm] = power_panel(rows, arm, key=arm)
+
+    # additivity: does the stack equal the sum of its parts?
+    singles = ["erp_433", "g_ceiling_rf", "sbc_addback", "tax_21",
+               "no_reinv_haircut", "capex_fade_all"]
+    adds = []
+    for r in rows:
+        if any(r.get(s) is None for s in singles + ["stack"]):
+            continue
+        sum_parts = sum(r[s] - r["gap"] for s in singles)
+        adds.append({"ticker": r["ticker"], "sum_parts": sum_parts,
+                     "stack_delta": r["stack"] - r["gap"]})
+    if adds:
+        ms = sorted(a["sum_parts"] for a in adds)
+        mt = sorted(a["stack_delta"] for a in adds)
+        print(f"\n  additivity: median sum-of-parts {ms[len(ms) // 2]:+.0%} "
+              f"vs median stack delta {mt[len(mt) // 2]:+.0%} "
+              f"(super-additive when stack > sum)")
+
+    print("\n== EPV surface ==")
+    panels["epv_base"] = power_panel(rows, "EPV base (maint = D&A)",
+                                     key="gap_epv")
+    panels["epv_dep_only"] = power_panel(rows, "EPV maint = dep only",
+                                         key="epv_maint_dep_only")
+
+    print("\n== Expensed R&D (estimate, no build) ==")
+    for r in sorted(rows, key=lambda x: -x.get("rnd_pct_rev", 0)):
+        if "rnd_epv_uplift_vs_price" in r:
+            print(f"  {r['ticker']:<6} R&D {r['rnd_pct_rev']:.0%} of rev  "
+                  f"ΔEBIT0 {r['rnd_d_ebit'] / 1e9:+.2f}B  EPV uplift "
+                  f"{r['rnd_epv_uplift_ps']:+.2f}/sh "
+                  f"({r['rnd_epv_uplift_vs_price']:+.0%} of price)")
+
+    if out_path:
+        with open(out_path, "w") as fh:
+            json.dump({"valuation_date": VALUATION_DATE.isoformat(),
+                       "rows": rows, "panels": panels,
+                       "additivity": adds, "failures": failures}, fh, indent=1)
+        print(f"written: {out_path}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default=None)
@@ -135,6 +334,10 @@ def main() -> int:
     parser.add_argument("--bias", action="store_true",
                         help="run profiles-off AND profiles-on arms and "
                              "report the structural-bias panels")
+    parser.add_argument("--levels", action="store_true",
+                        help="level decomposition: contribution of each "
+                             "global constant to the median gap, with "
+                             "discriminating-power panels per arm")
     args = parser.parse_args()
 
     cache = SqliteCache(".scan_cache.sqlite")
@@ -143,6 +346,11 @@ def main() -> int:
         AlpacaClient(os.environ.get("ALPACA_API_KEY_ID", ""),
                      os.environ.get("ALPACA_API_SECRET_KEY", "")),
         FredClient(os.environ.get("FRED_API_KEY", "")), cache=cache)
+
+    if args.levels:
+        run_levels(args.tickers or UNIVERSE, edgar, provider,
+                   out_path=args.out)
+        return 0
 
     rows, base_rows, failures = [], [], []
     for ticker in args.tickers or UNIVERSE:

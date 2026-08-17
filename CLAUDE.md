@@ -54,6 +54,20 @@ Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
 
 ## Decision log (recent additions)
 
+- **Level decomposition (2026-08-17, measurement only):** `python -m
+  diagnostics --levels` — how much of the −39% median gap each global
+  constant explains, with a discriminating-power panel (above/below split,
+  IQR, tail population) per arm. Result in
+  `docs/proposals/level-decomposition.md`: terminal-g cap +6pp / ERP-at-
+  implied +6pp / reinvestment haircut +5pp / tax +3pp / SBC +1pp (paired
+  medians), super-additive ~+20pp interaction through 1/(w_T − g); only the
+  g cap changes the distribution's shape; capex normalization contributes
+  0 (already delivered by the classifier); R&D capitalization not worth a
+  build. ERP proposal (`docs/proposals/erp-reevaluation.md`): real defect
+  is the unpaired Kroll-level/spot-10Y house mix; recommendation is the
+  Damodaran implied package (4.28%, Aug-2026) with lenses relabeled as
+  ERP/rf pairs — awaiting owner; nothing changed.
+
 - **Cap separation (owner, 2026-08-17):** the 4× capex/depreciation cap's
   withhold now fires only on a SUSPECT BASE — min per-pair dep/beg-PP&E
   < 4% (`dep_ppe_floor`, an implied 25y+ life can't coexist with 4× spend);
