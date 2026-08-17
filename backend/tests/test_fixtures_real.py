@@ -428,13 +428,32 @@ class TestUtilityScopeDecision20260816:
 class TestCapexBasisSwitch20260817:
     """The classifier's capex measure moved to the depreciation basis
     (owner-approved 2026-08-17, after the bias re-measurement). LLY (4.25×)
-    and ORCL (4.99×) cross the 4× suspect-base cap that combined-basis
-    ratios (3.02×, 3.51×) hid — reinvestment_heavy withheld, disclosed."""
+    and ORCL (4.99×) cross the 4× cap that combined-basis ratios (3.02×,
+    3.51×) hid. Same-day owner-directed refinement: the cap's withhold was
+    rationalized by a suspect depreciation base, but both cross it with
+    textbook-healthy bases (LLY ~9% dep/PP&E ≈ 10-year pharma plant, ORCL
+    ~18% ≈ 6-year server life) and genuinely extreme spend — the two
+    conditions are now separated, and only a suspect base withholds."""
 
-    @pytest.mark.parametrize("ticker", ["LLY", "ORCL"])
-    def test_modifier_withheld_above_cap_on_dep_basis(self, ticker):
+    @pytest.mark.parametrize("ticker,rate_lo,rate_hi", [
+        ("LLY", 0.08, 0.11), ("ORCL", 0.15, 0.20)])
+    def test_healthy_base_crosser_gains_the_modifier(self, ticker, rate_lo,
+                                                     rate_hi):
         _h, m = _engine_model(ticker)
         prof = m.assumptions.profile
         assert prof.measures.capex_da > 4.0
+        assert rate_lo < prof.measures.dep_ppe_min < rate_hi
+        assert "reinvestment_heavy" in prof.modifiers
+        assert any("genuine reinvestment surge" in n for n in prof.notes)
+        # the modifier's one effect: capex fades to maintenance
+        assert m.assumptions.eff("capex_fade") is True
+
+    def test_mcd_suspect_base_still_withheld(self):
+        # MCD: dep/PP&E ~1.7% claims a ~59-year asset life against capex at
+        # 6.6× depreciation — the lessee-D&A limitation, base suspect.
+        _h, m = _engine_model("MCD")
+        prof = m.assumptions.profile
+        assert prof.measures.capex_da > 4.0
+        assert prof.measures.dep_ppe_min < 0.04
         assert "reinvestment_heavy" not in prof.modifiers
-        assert any("sanity cap" in n for n in prof.notes)
+        assert any("suspect depreciation base" in n for n in prof.notes)

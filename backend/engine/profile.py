@@ -40,8 +40,21 @@ CAPEX_DA_MIN = 1.5          # reinvestment-heavy: same 1.5× already published
 #                             as reinvestment_fade_mismatch's trigger.
 #                             DEPRECIATION basis since 2026-08-17 (owner-
 #                             approved): capex vs the assets capex replaces
-CAPEX_DA_CAP = 4.0          # above this the depreciation base is suspect
-#                             (MCD's lessee-D&A limitation) — modifier withheld
+CAPEX_DA_CAP = 4.0          # above this the ratio needs explaining — either
+#                             the depreciation base is suspect or the spend is
+#                             genuinely extreme; DEP_PPE_FLOOR separates them
+DEP_PPE_FLOOR = 0.04        # suspect-base test (owner-approved 2026-08-17):
+#                             min per-pair depreciation / beginning net PP&E
+#                             below 4% claims a 25-year-plus asset life — a
+#                             filer cannot BOTH depreciate that slowly AND be
+#                             spending ≥ 4× depreciation on the same assets;
+#                             the depreciation line isn't describing what the
+#                             capex buys (MCD's lessee-D&A, CSCO's collapsed
+#                             D&A-minus-amortization). A healthy rate with a
+#                             ≥ 4× ratio is a real surge (ORCL's cloud
+#                             buildout at ~18% ≈ 6-year server life) — the
+#                             modifier applies. Universe gap is wide: suspect
+#                             crossers measure ≤ 1.8%, genuine ≥ 8.8%
 
 PRIMARIES = ("compounder", "mature", "declining")
 MODIFIERS = ("cyclical", "reinvestment_heavy")
@@ -64,6 +77,10 @@ class ProfileMeasures:
     #                               (D&A − intangible amortization; wire name
     #                               kept for share-code/type stability)
     window: int                   # periods observed
+    dep_ppe_min: float | None = None  # min per-pair depreciation / beginning
+    #                               net PP&E over the same trailing pairs —
+    #                               the suspect-base test's input; None when
+    #                               no pair is measurable (treated as suspect)
 
 
 @dataclass(frozen=True)
@@ -117,10 +134,31 @@ def classify(m: ProfileMeasures) -> Profile:
         if CAPEX_DA_MIN <= m.capex_da < CAPEX_DA_CAP:
             modifiers.append("reinvestment_heavy")
         elif m.capex_da >= CAPEX_DA_CAP:
-            notes.append(
-                f"capex/depreciation {m.capex_da:.2f}× exceeds the "
-                f"{CAPEX_DA_CAP:.0f}× sanity cap — depreciation base treated "
-                "as unreliable, reinvestment-heavy withheld")
+            # Separated conditions (owner-approved 2026-08-17): only a
+            # suspect BASE withholds the modifier. A suspect base is
+            # depreciation anomalous relative to the asset base; a real
+            # surge is spending anomalous relative to the company's own
+            # history and earns the modifier like any other crosser.
+            if m.dep_ppe_min is None or m.dep_ppe_min < DEP_PPE_FLOOR:
+                life = (f" ({1 / m.dep_ppe_min:.0f}-year implied asset life)"
+                        if m.dep_ppe_min else "")
+                notes.append(
+                    f"capex/depreciation {m.capex_da:.2f}× exceeds the "
+                    f"{CAPEX_DA_CAP:.0f}× cap with a suspect depreciation "
+                    f"base — dep/PP&E "
+                    + (f"{m.dep_ppe_min:.1%}{life}" if m.dep_ppe_min
+                       is not None else "unmeasurable")
+                    + " cannot describe the assets the capex buys; "
+                    "reinvestment-heavy withheld")
+            else:
+                modifiers.append("reinvestment_heavy")
+                notes.append(
+                    f"capex/depreciation {m.capex_da:.2f}× exceeds the "
+                    f"{CAPEX_DA_CAP:.0f}× cap with a sound depreciation "
+                    f"base (dep/PP&E {m.dep_ppe_min:.1%} ≈ "
+                    f"{1 / m.dep_ppe_min:.0f}-year life) — a genuine "
+                    "reinvestment surge, not a measurement artifact; "
+                    "modifier applied")
 
     auto = f"{primary}" + "".join(f"+{x}" for x in modifiers)
     return Profile(primary=primary, modifiers=tuple(modifiers),

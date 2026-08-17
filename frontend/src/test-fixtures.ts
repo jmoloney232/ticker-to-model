@@ -94,6 +94,7 @@ export function modelOk(over: Partial<ModelOk> = {}): ModelOk {
         rev_down_years: 0,
         capex_da: 2.5,
         window: 5,
+        dep_ppe_min: 0.148,
       },
     },
     verdict: {

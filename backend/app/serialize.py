@@ -595,6 +595,7 @@ def profile_out(m: ModelResult) -> dict | None:
             "margin_range": mm.margin_range,
             "rev_down_years": mm.rev_down_years,
             "capex_da": mm.capex_da, "window": mm.window,
+            "dep_ppe_min": mm.dep_ppe_min,
         },
     }
 

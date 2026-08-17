@@ -655,6 +655,7 @@ conventions:
       margin_range_min: 0.06
       capex_da_min: 1.5
       capex_da_cap: 4.0
+      dep_ppe_floor: 0.04
     derivation: >
       Declining: full-window revenue CAGR and the latest year both below 2%
       (≈ inflation — nominal growth below it is real shrinkage; both legs so
@@ -667,9 +668,22 @@ conventions:
       the conservative treatment. Cyclical modifier: EBIT-margin range ≥ 6pp
       AND at least one revenue down-year (margin volatility without a
       top-line contraction is a cost story, not a cycle). Reinvestment-heavy:
-      capex/depreciation between 1.5× (the reinvestment_fade_mismatch trigger
-      — same published constant) and 4× (above which the depreciation base is
-      treated as unreliable and the modifier is withheld, disclosed).
+      capex/depreciation ≥ 1.5× (the reinvestment_fade_mismatch trigger —
+      same published constant). Above 4× the ratio needs explaining, and the
+      two explanations get opposite treatments (separated 2026-08-17,
+      owner-directed): a SUSPECT BASE — depreciation anomalous relative to
+      the asset base, tested as minimum per-pair depreciation / beginning
+      net PP&E below 4%, since an implied asset life beyond 25 years cannot
+      coexist with spending ≥ 4× depreciation on the same assets (MCD's
+      lessee-D&A at 1.7%, CSCO's collapsed D&A-minus-amortization at ~0%)
+      — withholds the modifier, disclosed. A REAL SURGE — spending anomalous
+      relative to the company's own history while depreciation stays healthy
+      against the asset base (ORCL ~18% ≈ 6-year server life, TXN ~16%,
+      LLY ~9%) — earns the modifier like any other crosser, disclosed. In
+      the measured universe the two populations sit either side of a wide
+      empty band (suspect crossers ≤ 1.8%, genuine ≥ 8.8%); the 4% floor
+      lies in the gap with slack on both sides, placed by what the claim
+      means, not by any valuation outcome.
       Depreciation basis — D&A minus intangible amortization, same
       subtraction and observability guard as da_basis_split — since
       2026-08-17 (owner-approved after the structural-bias re-measurement):

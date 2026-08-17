@@ -16,6 +16,7 @@ from engine.profile import (
     CAPEX_DA_MIN,
     COMPOUNDER_CAGR_MIN,
     COMPOUNDER_LATEST_MIN,
+    DEP_PPE_FLOOR,
     EXCESS_RETURN_MIN,
     INFLATION_PROXY,
     MARGIN_RANGE_MIN,
@@ -57,6 +58,7 @@ def test_thresholds_match_methodology():
         "margin_range_min": MARGIN_RANGE_MIN,
         "capex_da_min": CAPEX_DA_MIN,
         "capex_da_cap": CAPEX_DA_CAP,
+        "dep_ppe_floor": DEP_PPE_FLOOR,
     }
 
 
@@ -103,14 +105,30 @@ class TestModifierRules:
         assert "cyclical" not in cost_story.modifiers
         assert any("cost story" in n for n in cost_story.notes)
 
-    def test_reinvestment_band_and_sanity_cap(self):
+    def test_reinvestment_band_and_separated_cap(self):
         assert "reinvestment_heavy" in classify(
             measures(capex_da=2.5)).modifiers
         assert "reinvestment_heavy" not in classify(
             measures(capex_da=1.2)).modifiers
-        mcd = classify(measures(capex_da=6.6))       # lessee-D&A limitation
+        # Above 4× the cap separates by depreciation-base health (owner-
+        # directed 2026-08-17). Suspect base: dep rate below the 4% floor
+        # (MCD's lessee-D&A shape) — withheld, disclosed.
+        mcd = classify(measures(capex_da=6.6, dep_ppe_min=0.017))
         assert "reinvestment_heavy" not in mcd.modifiers
-        assert any("sanity cap" in n for n in mcd.notes)
+        assert any("suspect depreciation base" in n for n in mcd.notes)
+        # Unmeasurable base is suspect too — the conservative side.
+        assert "reinvestment_heavy" not in classify(
+            measures(capex_da=6.6, dep_ppe_min=None)).modifiers
+        # Real surge: healthy dep rate (ORCL's cloud-buildout shape) —
+        # the modifier applies, and the note says why it's genuine.
+        orcl = classify(measures(capex_da=4.99, dep_ppe_min=0.175))
+        assert "reinvestment_heavy" in orcl.modifiers
+        assert any("genuine reinvestment surge" in n for n in orcl.notes)
+        # The floor binds exactly at the boundary.
+        assert "reinvestment_heavy" in classify(
+            measures(capex_da=4.5, dep_ppe_min=DEP_PPE_FLOOR)).modifiers
+        assert "reinvestment_heavy" not in classify(
+            measures(capex_da=4.5, dep_ppe_min=DEP_PPE_FLOOR - 1e-9)).modifiers
 
     def test_modifiers_layer_on_any_primary(self):
         p = classify(measures(cagr=-0.011, g_latest=-0.035,

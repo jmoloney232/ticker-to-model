@@ -492,14 +492,23 @@ def _profile_measures(history: FinancialHistory, wacc: float):
     # subtraction + observability guard as the dep_pct derivation.
     amort_seen = [p.get("amortization_intangibles") is not None
                   for p in ps[-3:]]
-    capex_da = []
-    for p, seen in zip(ps[-3:], amort_seen, strict=True):
+    capex_da, dep_rates = [], []
+    idx0 = len(ps) - len(amort_seen)
+    for k, (p, seen) in enumerate(zip(ps[-3:], amort_seen, strict=True)):
         if any(amort_seen) and not seen:
             continue
         dep = max(p.value("d_and_a", 0.0)
                   - p.value("amortization_intangibles", 0.0), 0.0)
         if dep > 0:
             capex_da.append(abs(p.value("capex", 0.0)) / dep)
+        # Suspect-base input (owner-approved 2026-08-17): dep against the
+        # beginning asset base, same trailing pairs, dep = 0 kept — a
+        # collapsed subtraction IS the suspect signal (CSCO); excluding it
+        # would hide exactly that.
+        if idx0 + k > 0:
+            ppe = ps[idx0 + k - 1].value("ppe_net", 0.0)
+            if ppe > 0:
+                dep_rates.append(dep / ppe)
 
     return ProfileMeasures(
         cagr=(rev[-1] / rev[0]) ** (1 / n_years) - 1,
@@ -512,6 +521,7 @@ def _profile_measures(history: FinancialHistory, wacc: float):
         rev_down_years=sum(1 for x, y in zip(rev, rev[1:], strict=False) if y < x),
         capex_da=_mean(capex_da) if capex_da else None,
         window=len(ps),
+        dep_ppe_min=min(dep_rates) if dep_rates else None,
     )
 
 

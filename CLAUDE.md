@@ -54,6 +54,14 @@ Frontend: `cd frontend && npm install && npm run dev` (proxies `/api` to
 
 ## Decision log (recent additions)
 
+- **Cap separation (owner, 2026-08-17):** the 4× capex/depreciation cap's
+  withhold now fires only on a SUSPECT BASE — min per-pair dep/beg-PP&E
+  < 4% (`dep_ppe_floor`, an implied 25y+ life can't coexist with 4× spend);
+  a healthy base crossing 4× is a REAL SURGE and earns the modifier.
+  Reclassified: ORCL +28.0%, LLY +5.8%, TXN +10.5% gain reinvestment_heavy;
+  MCD (1.6% dep rate) and CSCO (collapsed subtraction, 168×) stay withheld.
+  Universe gap is wide (suspect ≤1.8%, genuine ≥8.8%).
+
 - **Preset/profile navigation (owner, 2026-08-17):** two distinct controls on
   the Model tab — methodology lens (preset cards with rationales + framing:
   market-implied is information, not a target) and company profile (blurbed

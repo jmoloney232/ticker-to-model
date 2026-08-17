@@ -76,6 +76,15 @@ tags for lessor balances (so PL7 can tell "missing lessee data" from "lessor-hea
 filer"), plus verified chain additions for MCD's lessee-side tags. Chain-add-sized
 work, but it needs the review before the add.
 
+The same tagging shape also makes MCD's mapped *depreciation* under-inclusive
+(dep/beginning-PP&E ≈ 1.7%, an implied ~59-year asset life against a $25B owned
+asset base) — which is why the classifier's suspect-base test (methodology:
+`company_profiles`, `dep_ppe_floor`) withholds the reinvestment-heavy modifier
+for MCD rather than trusting a 6.6× capex/depreciation ratio built on that
+denominator. CSCO shows the other suspect-base shape: its mapped D&A tag is
+smaller than its intangible-amortization tag in FY2024–25, so the subtraction
+collapses to ~0 and the ratio explodes (168×) — also withheld, disclosed.
+
 ## 4. Captive-finance balance sheets (DE; CAT partially)
 
 **What breaks:** John Deere maps only 20% of assets and 18% of liabilities to named

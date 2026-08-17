@@ -148,6 +148,7 @@ export interface ProfileInfo {
     rev_down_years: number;
     capex_da: number | null;
     window: number;
+    dep_ppe_min: number | null; // suspect-base test input (cap separation)
   };
 }
 
