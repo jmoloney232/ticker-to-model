@@ -15,6 +15,7 @@ from .assumptions import (
     DISTRESSED_SPREAD,
     RATING_TABLE_AS_OF,
     TERMINAL_G_CEIL,
+    TERMINAL_SPREAD_FLOOR,
     apply_overrides,
     derive_assumptions,
     gross_debt,
@@ -554,6 +555,36 @@ def build_model(history: FinancialHistory, market: MarketInputs,
             detail={"provenance": tg_field.provenance,
                     "house_cap": house_cap}))
 
+    # Terminal spread floor (owner-approved 2026-08-17). The derived default
+    # is clamped at derivation time (landing exactly ON the floor, disclosed
+    # via its derivation string); a user/preset value inside the band is the
+    # user's model — warned with the implied multiple, never clamped. The
+    # g ≥ WACC hard block above stays the hard boundary.
+    user_layer = (tg_field.override is not None
+                  or tg_field.preset_value is not None)
+    if user_layer and wacc - TERMINAL_SPREAD_FLOOR < g < wacc:
+        warnings.append(EngineWarning(
+            code="terminal_spread_thin",
+            message=(f"Terminal spread WACC − g = {wacc - g:.2%} is below "
+                     f"the {TERMINAL_SPREAD_FLOOR:.0%} floor — the implied "
+                     f"terminal multiple is {1 / (wacc - g):,.0f}× terminal "
+                     "FCF, and the spread is inside the estimate's own "
+                     "uncertainty (beta standard error and the contested "
+                     "ERP alone put ±1%+ on the cost of equity). The value "
+                     "shown is dominated by that choice."),
+            detail={"spread": wacc - g,
+                    "implied_multiple": 1 / (wacc - g),
+                    "provenance": tg_field.provenance}))
+    elif not user_layer and "spread floor" in tg_field.derivation:
+        warnings.append(EngineWarning(
+            code="terminal_spread_floor",
+            message=(f"The derived terminal-growth default was clamped to "
+                     f"WACC − {TERMINAL_SPREAD_FLOOR:.0%} = "
+                     f"{tg_field.value:.2%} — the unclamped default sat "
+                     "inside the model's own estimation noise (methodology: "
+                     "terminal_spread_floor)."),
+            detail={"spread": wacc - tg_field.value}))
+
     projections = project(history, a)
     for p in projections:
         if p.balance["cash_and_equivalents"] < 0:
@@ -583,21 +614,25 @@ def build_model(history: FinancialHistory, market: MarketInputs,
 
     fy_last, fy_prev = projections[-1], projections[-2]
     capex_n = fy_last.cashflow["capex"]
-    da_n = fy_last.cashflow["d_and_a"]
+    # Depreciation basis (owner-approved 2026-08-17, with the classifier's
+    # capex/depreciation measure): run-off amortization is not replaced by
+    # capex, so it does not belong in the replacement-ratio denominator.
+    dep_n = fy_last.cashflow["depreciation"]
     g_n = fy_last.income["revenue"] / fy_prev.income["revenue"] - 1
-    if (da_n > 0 and capex_n / da_n > REINVEST_FADE_RATIO
+    if (dep_n > 0 and capex_n / dep_n > REINVEST_FADE_RATIO
             and abs(g_n - g) <= REINVEST_FADE_G_BAND):
         warnings.append(EngineWarning(
             code="reinvestment_fade_mismatch",
-            message=(f"FY{fy_last.fiscal_year}: capex is {capex_n / da_n:.1f}× "
-                     f"D&A while revenue growth has faded to {g_n:.1%} "
+            message=(f"FY{fy_last.fiscal_year}: capex is {capex_n / dep_n:.1f}× "
+                     f"depreciation while revenue growth has faded to {g_n:.1%} "
                      f"(terminal g {g:.1%}) — elevated growth-era reinvestment "
                      "is carried into a period modeled as near-mature. Capex is "
                      "deliberately NOT auto-faded (capex-equals-depreciation at "
                      "steady state is itself contested); the street_convention "
-                     "preset expresses a fade toward D&A parity if that is "
-                     "your view."),
-            detail={"capex_over_da": capex_n / da_n, "final_year_growth": g_n}))
+                     "preset expresses a fade toward depreciation parity if "
+                     "that is your view."),
+            detail={"capex_over_da": capex_n / dep_n,
+                    "final_year_growth": g_n}))
 
     # Split D&A basis disclosures (owner-approved 2026-08-16).
     window = history.periods[-3:]

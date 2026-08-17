@@ -375,6 +375,60 @@ class TestTerminalGrowthChecks:
         assert "terminal_growth_rf_ceiling" in DISPLAY_ONLY
 
 
+class TestTerminalSpreadFloor:
+    """Owner-approved 2026-08-17 (docs/proposals/terminal-spread-floor.md):
+    the DERIVED default is clamped at WACC − 2%; overrides/presets inside
+    the band are warned, never clamped; g ≥ WACC stays hard-blocked. The
+    floor exists for the override hole — the measured rate-swing concern
+    was disproved (methodology: terminal_spread_floor)."""
+
+    def test_floor_is_a_noop_at_normal_spreads(self):
+        # toy WACC ≈ 6.86%, default g 2.5% → spread 4.36%, nothing fires
+        m = toy_model()
+        f = m.assumptions.fields["terminal_growth"]
+        assert f.value == pytest.approx(0.025)
+        assert "spread floor" not in f.derivation
+        assert not {"terminal_spread_floor", "terminal_spread_thin"} & \
+            {w.code for w in m.warnings}
+
+    def test_derived_default_clamps_and_discloses(self):
+        # rf 2%, beta 0.1 (Blume → 0.4667... low): WACC ≈ 3.2% → ceiling
+        # ≈ 1.2% sits below the 2% default → clamp + warning + derivation
+        m = toy_model(rf=0.02, beta=0.1)
+        w = m.wacc.wacc
+        f = m.assumptions.fields["terminal_growth"]
+        assert f.override is None
+        assert f.value == pytest.approx(w - 0.02)
+        assert "spread floor" in f.derivation
+        assert any(x.code == "terminal_spread_floor" for x in m.warnings)
+
+    def test_override_in_band_warns_but_is_not_clamped(self):
+        base = toy_model()
+        g = base.wacc.wacc - 0.01                  # inside (WACC−2%, WACC)
+        m = toy_model(overrides={"terminal_growth": g})
+        assert m.assumptions.eff("terminal_growth") == pytest.approx(g)
+        thin = [x for x in m.warnings if x.code == "terminal_spread_thin"]
+        assert thin and thin[0].detail["implied_multiple"] == \
+            pytest.approx(100.0, rel=0.05)
+        assert "gordon" in m.bridges              # warned, still builds
+
+    def test_at_or_above_wacc_still_hard_blocks(self):
+        base = toy_model()
+        with pytest.raises(InvalidAssumptionError):
+            toy_model(overrides={"terminal_growth": base.wacc.wacc})
+
+    def test_constant_matches_methodology(self):
+        import yaml as yamllib
+        from pathlib import Path
+        from engine.assumptions import TERMINAL_SPREAD_FLOOR
+        doc = yamllib.safe_load(
+            (Path(__file__).parent.parent / "engine" / "methodology.yaml")
+            .read_text())
+        entry = next(c for c in doc["conventions"]
+                     if c["id"] == "terminal_spread_floor")
+        assert entry["floor"] == TERMINAL_SPREAD_FLOOR
+
+
 class TestForecastHorizon:
     """Audit task 7: horizon {5, 7, 10}, default 5; every fade and exponent
     follows the selected horizon."""

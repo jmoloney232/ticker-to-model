@@ -187,6 +187,34 @@ conventions:
       constraint); stated g above the house cap but at or below rf draws only an
       info-level terminal_g_above_house_cap flag; g ≥ WACC is hard-blocked.
 
+  - id: terminal_spread_floor
+    label: Terminal spread floor (WACC − g ≥ 2%)
+    category: terminal_value
+    floor: 0.02
+    default: "The DERIVED terminal-growth default is clamped to WACC − 2% (a no-op for every current filer); user or preset values inside the band draw the terminal_spread_thin warning naming the implied terminal multiple — warned, never clamped; g ≥ WACC stays hard-blocked"
+    derivation: >
+      Two non-market anchors (docs/proposals/terminal-spread-floor.md,
+      owner-approved 2026-08-17): the model's own noise floor — beta standard
+      error and the contested ERP put ±1%+ on the cost of equity and g is no
+      tighter than ±50bp, so a spread under 2% is inside the joint uncertainty
+      of its own inputs — and implied duration, since 1/(WACC − g) is the
+      terminal multiple and the order of the value's duration in years (a 1%
+      spread asserts century-scale confidence). Structurally, with g ≤ rf and
+      a single WACC the spread is already bounded below by roughly
+      equity-weight × beta × ERP; the tightest observed spread in the
+      supported universe is 2.84% (COST).
+    editable: false
+    tradeoff: >
+      For the record, because the measurement contradicted the motivating
+      concern: the rule was proposed against a feared rate instability — that
+      the g-at-10Y compounder default would swing low-WACC valuations
+      violently as the 10Y moved. Tested and disproved (2026-08-16): rf
+      passes through g and WACC in lockstep, the spread is stable across a
+      200bp rf range (COST: 2.85% → 2.84% → 2.84%), and ±100bp moves those
+      valuations only ±3–5%. The floor exists for the override hole — before
+      it, g = WACC − 10bp printed a 1000× terminal multiple with no comment —
+      and for future low-beta entrants, not for rate stability.
+
   - id: terminal_reinvestment
     label: Terminal reinvestment consistency
     category: terminal_value
@@ -421,7 +449,7 @@ conventions:
   - id: reinvestment_fade_warning
     label: Reinvestment-fade mismatch warning
     category: projections
-    default: "Warn when final-year capex > 1.5× memo D&A while final-year revenue growth is within 1.0pp of terminal g; capex is never auto-faded"
+    default: "Warn when final-year capex > 1.5× memo depreciation (D&A minus intangible amortization) while final-year revenue growth is within 1.0pp of terminal g; capex is never auto-faded"
     derivation: >
       capex_pct is a flat 3y mean held across the forecast while growth fades to
       terminal g — a company decelerating to ~2.5% growth while reinvesting at its
@@ -434,10 +462,10 @@ conventions:
       engine warns instead of auto-fading, and points at the street_convention preset
       (midpoint fade to depreciation parity — depreciation-only basis, since
       intangible amortization is not replaced by capex) as the opinionated
-      expression of a fade. The warning's own trigger still uses the combined
-      D&A memo; switching it to a depreciation basis is a flagged open
-      question (see known-limitations) deliberately deferred until after the
-      2026-08 structural-bias re-measurement.
+      expression of a fade. The trigger moved to the depreciation basis on
+      2026-08-17 (owner-approved) once the structural-bias re-measurement had
+      landed — the deferral existed so profile membership stayed stable
+      during that measurement, and the flip effects are pinned in tests.
 
   - id: unobservable_interest
     label: Unobservable interest lines
@@ -597,9 +625,14 @@ conventions:
       the conservative treatment. Cyclical modifier: EBIT-margin range ≥ 6pp
       AND at least one revenue down-year (margin volatility without a
       top-line contraction is a cost story, not a cycle). Reinvestment-heavy:
-      capex/D&A between 1.5× (the reinvestment_fade_mismatch trigger — same
-      published constant) and 4× (above which the D&A base is treated as
-      unreliable and the modifier is withheld, disclosed). A profile may set
+      capex/depreciation between 1.5× (the reinvestment_fade_mismatch trigger
+      — same published constant) and 4× (above which the depreciation base is
+      treated as unreliable and the modifier is withheld, disclosed).
+      Depreciation basis — D&A minus intangible amortization, same
+      subtraction and observability guard as da_basis_split — since
+      2026-08-17 (owner-approved after the structural-bias re-measurement):
+      amortization in the denominator suppressed the modifier for serial
+      acquirers and understated cap crossings. A profile may set
       only: forecast horizon, terminal growth default, margin normalization,
       capex normalization. Never WACC components, the bridge, or validation
       thresholds. (Growth fade shape left this list 2026-08-16 — see
@@ -642,7 +675,7 @@ conventions:
     category: assumptions
     default: "OFF unless the reinvestment-heavy modifier applies: capex % of revenue fades linearly from the trailing rate to maintenance — trailing 3y depreciation/revenue × (1 + terminal g), depreciation-only basis since run-off amortization is not replaced by capex — by the final forecast year"
     derivation: >
-      Capex persistently ≥ 1.5× D&A means the asset base grows materially
+      Capex persistently ≥ 1.5× depreciation means the asset base grows materially
       faster than it depreciates — held flat forever, that contradicts the
       terminal growth rate (exactly what the reinvestment_fade_mismatch
       warning flags; this is that warning's documented remedy). The

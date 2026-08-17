@@ -37,9 +37,11 @@ MARGIN_RANGE_MIN = 0.06     # cyclical: stable large-caps sit ≤5pp, true
 #                             cyclicals ≥7pp; margin volatility WITHOUT a
 #                             revenue down-year is a cost story, not a cycle
 CAPEX_DA_MIN = 1.5          # reinvestment-heavy: same 1.5× already published
-#                             as reinvestment_fade_mismatch's trigger
-CAPEX_DA_CAP = 4.0          # above this the D&A base is suspect (MCD's
-#                             lessee-D&A limitation) — modifier withheld
+#                             as reinvestment_fade_mismatch's trigger.
+#                             DEPRECIATION basis since 2026-08-17 (owner-
+#                             approved): capex vs the assets capex replaces
+CAPEX_DA_CAP = 4.0          # above this the depreciation base is suspect
+#                             (MCD's lessee-D&A limitation) — modifier withheld
 
 PRIMARIES = ("compounder", "mature", "declining")
 MODIFIERS = ("cyclical", "reinvestment_heavy")
@@ -58,7 +60,9 @@ class ProfileMeasures:
     wacc: float
     margin_range: float           # max − min EBIT margin over the window
     rev_down_years: int           # year-over-year revenue declines observed
-    capex_da: float | None        # mean capex / D&A, trailing 3y
+    capex_da: float | None        # mean capex / depreciation, trailing 3y
+    #                               (D&A − intangible amortization; wire name
+    #                               kept for share-code/type stability)
     window: int                   # periods observed
 
 
@@ -110,9 +114,9 @@ def classify(m: ProfileMeasures) -> Profile:
             modifiers.append("reinvestment_heavy")
         elif m.capex_da >= CAPEX_DA_CAP:
             notes.append(
-                f"capex/D&A {m.capex_da:.2f}× exceeds the {CAPEX_DA_CAP:.0f}× "
-                "sanity cap — D&A base treated as unreliable, "
-                "reinvestment-heavy withheld")
+                f"capex/depreciation {m.capex_da:.2f}× exceeds the "
+                f"{CAPEX_DA_CAP:.0f}× sanity cap — depreciation base treated "
+                "as unreliable, reinvestment-heavy withheld")
 
     return Profile(primary=primary, modifiers=tuple(modifiers),
                    measures=m, notes=tuple(notes))

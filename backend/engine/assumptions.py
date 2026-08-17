@@ -31,6 +31,14 @@ EFF_TAX_CLAMP = (0.10, 0.35)
 ERP = 0.05
 TERMINAL_G_FLOOR, TERMINAL_G_CEIL = 0.015, 0.025
 CASH_FLOOR_PCT = 0.02
+# Minimum WACC − g spread for the DERIVED terminal-growth default
+# (owner-approved 2026-08-17; docs/proposals/terminal-spread-floor.md).
+# Grounded in the model's own estimation noise floor (beta SE + contested
+# ERP put ±1%+ on Ke; g is ±50bp) and implied duration (a 2% spread is a
+# 50× terminal multiple ≈ 50-year duration) — never in market prices.
+# Binds NO current filer (tightest observed spread: COST 2.84%); it guards
+# the rails. Overrides/presets inside the band are warned, never clamped.
+TERMINAL_SPREAD_FLOOR = 0.02
 
 # Synthetic-rating spread table — Damodaran, "Ratings, Interest Coverage
 # Ratios and Default Spread", LARGE non-financial firms table, data as of
@@ -418,6 +426,25 @@ def derive_assumptions(history: FinancialHistory, market: MarketInputs,
     out = Assumptions(fields=a, cost_structure=cs)
     if profile is not None:
         _classify_and_apply(out, history, market, profile)
+
+    # ── terminal spread floor (owner-approved 2026-08-17) ──────────────────
+    # The DERIVED default may not come within TERMINAL_SPREAD_FLOOR of WACC:
+    # a spread inside the model's own input noise prints artifacts, not
+    # estimates. A no-op for every current filer (structurally, with g ≤ rf
+    # and one WACC the spread is bounded below by ~wE·β·ERP); if it ever
+    # binds, the derivation says so and dcf warns. Presets and user
+    # overrides layer on top and are warned in-band, never clamped.
+    from .wacc import build_wacc  # lazy: wacc.py imports this module
+    wacc_now = build_wacc(history, market, out).wacc
+    g_field = out.fields["terminal_growth"]
+    ceiling = wacc_now - TERMINAL_SPREAD_FLOOR
+    if g_field.value is not None and g_field.value > ceiling:
+        g_field.derivation = (
+            f"{g_field.derivation} — CLAMPED by the terminal spread floor: "
+            f"WACC ({wacc_now:.2%}) − {TERMINAL_SPREAD_FLOOR:.0%} = "
+            f"{ceiling:.2%} (a smaller spread is inside the estimate's own "
+            "uncertainty; methodology: terminal_spread_floor)")
+        g_field.value = ceiling
     return out
 
 
@@ -446,11 +473,22 @@ def _profile_measures(history: FinancialHistory, wacc: float):
         if ic > 0:
             roics.append(cur.value("operating_income") * (1 - MARGINAL_TAX) / ic)
 
+    # Depreciation basis (owner-approved 2026-08-17, deferred from the D&A
+    # split until the bias re-measurement landed): amortization in the
+    # denominator suppressed the reinvestment-heavy modifier for serial
+    # acquirers (MRK 0.82× combined vs 1.69× on depreciation) and understated
+    # the suspect-base cap crossing for others (ORCL 3.51× vs 4.99×). Same
+    # subtraction + observability guard as the dep_pct derivation.
+    amort_seen = [p.get("amortization_intangibles") is not None
+                  for p in ps[-3:]]
     capex_da = []
-    for p in ps[-3:]:
-        da = p.value("d_and_a", 0.0)
-        if da > 0:
-            capex_da.append(abs(p.value("capex", 0.0)) / da)
+    for p, seen in zip(ps[-3:], amort_seen, strict=True):
+        if any(amort_seen) and not seen:
+            continue
+        dep = max(p.value("d_and_a", 0.0)
+                  - p.value("amortization_intangibles", 0.0), 0.0)
+        if dep > 0:
+            capex_da.append(abs(p.value("capex", 0.0)) / dep)
 
     return ProfileMeasures(
         cagr=(rev[-1] / rev[0]) ** (1 / n_years) - 1,

@@ -25,7 +25,8 @@ function measuresText(p: ProfileInfo): string {
         `(${m.roic_years_above_wacc}/${m.roic_years} yrs above)`,
     );
   parts.push(`margin range ${fmtPct(m.margin_range, 1)}`);
-  if (m.capex_da != null) parts.push(`capex/D&A ${m.capex_da.toFixed(2)}×`);
+  if (m.capex_da != null)
+    parts.push(`capex/depreciation ${m.capex_da.toFixed(2)}×`);
   return parts.join(" · ");
 }
 

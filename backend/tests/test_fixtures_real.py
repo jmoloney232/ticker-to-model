@@ -423,3 +423,18 @@ class TestUtilityScopeDecision20260816:
     def test_entry_present_with_verified_reason(self, ticker, needle):
         from ingest.assemble import known_unsupported
         assert needle in known_unsupported()[ticker]
+
+
+class TestCapexBasisSwitch20260817:
+    """The classifier's capex measure moved to the depreciation basis
+    (owner-approved 2026-08-17, after the bias re-measurement). LLY (4.25×)
+    and ORCL (4.99×) cross the 4× suspect-base cap that combined-basis
+    ratios (3.02×, 3.51×) hid — reinvestment_heavy withheld, disclosed."""
+
+    @pytest.mark.parametrize("ticker", ["LLY", "ORCL"])
+    def test_modifier_withheld_above_cap_on_dep_basis(self, ticker):
+        _h, m = _engine_model(ticker)
+        prof = m.assumptions.profile
+        assert prof.measures.capex_da > 4.0
+        assert "reinvestment_heavy" not in prof.modifiers
+        assert any("sanity cap" in n for n in prof.notes)

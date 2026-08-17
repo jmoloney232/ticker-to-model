@@ -265,14 +265,13 @@ of beginning PP&E → −$3.1T projected PP&E, gordon −$342/share), and ABBV/A
 printed negative PP&E in three projected years each. Methodology:
 `da_basis_split`; regression tests pin AVGO/ABBV/AMD.
 
-**Deliberately left, flagged for a decision after the structural-bias
-re-measurement:** the profile classifier's capex/D&A measure and the
-`reinvestment_fade_mismatch` warning still use the combined D&A memo. On a
-depreciation-only basis, six filers cross a published trigger (DIS, MRK, NOW
-would gain `reinvestment_heavy`; CSCO, LLY, ORCL would cross the 4× suspect
-cap). Switching the basis mid-round would have made the profile
-before/after measurement unattributable, so the basis question is parked
-here, visible, until that measurement lands.
+**Resolved 2026-08-17 (owner-approved after the bias re-measurement
+landed):** the profile classifier's capex measure and the
+`reinvestment_fade_mismatch` warning now use the depreciation basis too —
+the deferral existed only so profile membership stayed stable during the
+two-arm measurement. The filers that crossed published triggers on the
+switch are pinned in the regression tests and reported in the 2026-08-17
+round notes.
 
 **Also left:** filers who never tag intangible amortization separately
 (CRM, NFLX) keep the combined basis behind an `amortization_unobservable`
